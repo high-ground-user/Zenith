@@ -2,6 +2,9 @@ import pygame
 import random
 import sys
 import math
+import io
+import wave
+import struct
 
 # Constants
 SCREEN_WIDTH = 800
@@ -27,6 +30,266 @@ INDIGO = (75, 0, 130)
 MAGENTA = (255, 0, 255)
 PURPLE = (147, 112, 219)
 
+SOUNDS = None
+
+class SoundManager:
+    def __init__(self):
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            self.enabled = True
+            self.volume = 0.5
+        except Exception:
+            self.enabled = False
+            return
+
+        self.sounds = {}
+        # Generate basic retro sounds in memory (enhanced with triangle waves, red noise, and custom decay)
+        self.sounds['laser'] = self._gen_synth('triangle', 660, 0.12, vol=0.12, sweep=-0.6, decay=4.0)
+        self.sounds['shotgun'] = self._gen_synth('noise', 80, 0.25, vol=0.25, sweep=-0.2, decay=5.0)
+        self.sounds['railgun'] = self._gen_synth('sine', 180, 0.35, vol=0.22, sweep=-0.4, decay=3.0)
+        self.sounds['explosion'] = self._gen_synth('noise', 40, 0.5, vol=0.35, sweep=-0.4, decay=2.5)
+        self.sounds['siren'] = self._gen_synth('sine', 500, 0.4, vol=0.15, sweep=0.1, decay=2.0)
+        self.sounds['hit'] = self._gen_synth('noise', 120, 0.08, vol=0.2, sweep=-0.2, decay=6.0)
+        self.sounds['collect'] = self._gen_synth('sine', 950, 0.15, vol=0.15, sweep=0.4, decay=4.5)
+        self.sounds['launch'] = self._gen_synth('noise', 100, 0.3, vol=0.2, sweep=-0.4, decay=4.0)
+        self.sounds['warp'] = self._gen_synth('sine', 150, 1.2, vol=0.3, sweep=1.0, decay=1.5)
+        
+        self.music_ambient = self._gen_ambient_music()
+        self.music_boss = self._gen_boss_music()
+        self.chan_ambient = None
+        self.chan_boss = None
+
+        self.set_global_volume(self.volume)
+
+    def set_global_volume(self, volume):
+        if not self.enabled: return
+        self.volume = max(0.0, min(1.0, volume))
+        for sound in self.sounds.values():
+            if sound:
+                sound.set_volume(self.volume)
+
+    def _gen_synth(self, wave_type, freq, duration, vol=0.5, sweep=0.0, decay=3.0):
+        if not self.enabled: return None
+        sample_rate = 22050
+        num_samples = int(sample_rate * duration)
+        buf = io.BytesIO()
+        try:
+            with wave.open(buf, 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(sample_rate)
+                
+                data = bytearray()
+                noise_state = 0.0
+                for i in range(num_samples):
+                    t = float(i) / sample_rate
+                    current_freq = freq * (1.0 + sweep * (i / num_samples))
+                    
+                    if wave_type == 'square':
+                        val = 1.0 if math.sin(2 * math.pi * current_freq * t) > 0 else -1.0
+                    elif wave_type == 'triangle':
+                        cycle = current_freq * t
+                        val = 2.0 * abs(2.0 * (cycle - math.floor(cycle + 0.5))) - 1.0
+                    elif wave_type == 'sawtooth':
+                        cycle = current_freq * t
+                        val = 2.0 * (cycle - math.floor(cycle + 0.5))
+                    elif wave_type == 'noise':
+                        # One-pole LPF to turn harsh white noise into soft red noise
+                        raw_noise = random.uniform(-1.0, 1.0)
+                        noise_state = 0.85 * noise_state + 0.15 * raw_noise
+                        val = noise_state * 3.5  # Gain recovery
+                    else: # sine
+                        val = math.sin(2 * math.pi * current_freq * t)
+                        
+                    # Smooth exponential decay + fade-out to prevent pops
+                    envelope = math.exp(-decay * (i / num_samples)) * (1.0 - i / num_samples)
+                    sample = int(val * vol * envelope * 32767)
+                    sample = max(-32768, min(32767, sample))
+                    data += struct.pack('<h', sample)
+                wav.writeframes(data)
+            buf.seek(0)
+            return pygame.mixer.Sound(buf)
+        except Exception:
+            return None
+
+    def play(self, name):
+        if self.enabled and name in self.sounds and self.sounds[name]:
+            self.sounds[name].play()
+
+    def play_spatial(self, name, source_x, source_y, player_x, player_y):
+        if not self.enabled: return
+        if name not in self.sounds or not self.sounds[name]: return
+        
+        dx = source_x - player_x
+        dy = source_y - player_y
+        dist = math.sqrt(dx**2 + dy**2)
+        
+        # Max audible distance of 1500px
+        vol_mult = max(0.0, min(1.0, 1.0 - (dist / 1500.0)))
+        pan = max(-1.0, min(1.0, dx / 600.0))
+        
+        left_vol = self.volume * vol_mult * (1.0 - max(0.0, pan))
+        right_vol = self.volume * vol_mult * (1.0 - max(0.0, -pan))
+        
+        channel = self.sounds[name].play()
+        if channel:
+            channel.set_volume(left_vol, right_vol)
+
+    def _gen_ambient_music(self):
+        sample_rate = 22050
+        duration = 8.0
+        num_samples = int(sample_rate * duration)
+        buf = io.BytesIO()
+        try:
+            with wave.open(buf, 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(sample_rate)
+                data = bytearray()
+                
+                # Ambient chords: slow 4-note progression (Cmin7 -> Abmaj7 -> Gmin7 -> Fmin7)
+                chords = [
+                    [130.81, 155.56, 196.00, 233.08],
+                    [103.83, 155.56, 207.65, 261.63],
+                    [98.00, 146.83, 196.00, 233.08],
+                    [87.31, 130.81, 174.61, 207.65]
+                ]
+                
+                for i in range(num_samples):
+                    t = float(i) / sample_rate
+                    chord_idx = int((t / duration) * len(chords)) % len(chords)
+                    notes = chords[chord_idx]
+                    
+                    val = 0.0
+                    for freq in notes:
+                        lfo = 0.4 + 0.3 * math.sin(2 * math.pi * 0.25 * t)
+                        val += math.sin(2 * math.pi * freq * t) * lfo
+                    val /= len(notes)
+                    
+                    sample = int(val * 0.08 * 32767)
+                    sample = max(-32768, min(32767, sample))
+                    data += struct.pack('<h', sample)
+                wav.writeframes(data)
+            buf.seek(0)
+            return pygame.mixer.Sound(buf)
+        except Exception:
+            return None
+
+    def _gen_boss_music(self):
+        sample_rate = 22050
+        duration = 4.0
+        num_samples = int(sample_rate * duration)
+        buf = io.BytesIO()
+        try:
+            with wave.open(buf, 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(sample_rate)
+                data = bytearray()
+                
+                # Fast bassline notes: C2 -> Eb2 -> D2 -> Bb1
+                bassline = [65.41, 77.78, 73.42, 58.27]
+                
+                for i in range(num_samples):
+                    t = float(i) / sample_rate
+                    beat_idx = int(t / 0.214) % len(bassline)
+                    freq = bassline[beat_idx]
+                    
+                    cycle = freq * t
+                    val = 2.0 * (cycle - math.floor(cycle + 0.5))
+                    env = 1.0 - (t % 0.214) / 0.214
+                    
+                    sample = int(val * 0.15 * env * 32767)
+                    sample = max(-32768, min(32767, sample))
+                    data += struct.pack('<h', sample)
+                wav.writeframes(data)
+            buf.seek(0)
+            return pygame.mixer.Sound(buf)
+        except Exception:
+            return None
+
+    def update_music(self, wants_boss):
+        if not self.enabled: return
+        
+        # Start loops if not running
+        if self.chan_ambient is None and self.music_ambient:
+            self.chan_ambient = self.music_ambient.play(loops=-1)
+        if self.chan_boss is None and self.music_boss:
+            self.chan_boss = self.music_boss.play(loops=-1)
+            if self.chan_boss: self.chan_boss.set_volume(0.0)
+            
+        target_ambient = self.volume * 0.5 if not wants_boss else 0.0
+        target_boss = self.volume * 0.7 if wants_boss else 0.0
+        
+        if self.chan_ambient:
+            cur_vol = self.chan_ambient.get_volume()
+            self.chan_ambient.set_volume(cur_vol + (target_ambient - cur_vol) * 0.05)
+        if self.chan_boss:
+            cur_vol = self.chan_boss.get_volume()
+            self.chan_boss.set_volume(cur_vol + (target_boss - cur_vol) * 0.05)
+
+class Quest:
+    def __init__(self, key, title, description, target, reward_credits, reward_xp):
+        self.key = key
+        self.title = title
+        self.description = description
+        self.target = target
+        self.progress = 0
+        self.completed = False
+        self.reward_credits = reward_credits
+        self.reward_xp = reward_xp
+
+    def is_complete(self):
+        return self.progress >= self.target
+
+class LootPickup:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.radius = 10
+        self.rect = pygame.Rect(self.x - self.radius, self.y - self.radius, self.radius * 2, self.radius * 2)
+        self.rarity = random.choice(['COMMON', 'UNCOMMON', 'RARE'])
+        self.effects = {
+            'COMMON': [('shield', 1)],
+            'UNCOMMON': [('cooldown', 0.05)],
+            'RARE': [('damage', 0.15)]
+        }[self.rarity]
+        self.color = {'COMMON': (100, 200, 255), 'UNCOMMON': (255, 215, 0), 'RARE': (255, 80, 255)}[self.rarity]
+
+    def update(self):
+        self.y -= 0.3
+        self.rect.center = (int(self.x), int(self.y))
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        ticks = pygame.time.get_ticks()
+        pulse = int(2 * math.sin(ticks * 0.02))
+        
+        # Rotating diamond wireframe
+        num_sides = 4
+        r = self.radius + pulse
+        points = []
+        for i in range(num_sides):
+            ang = math.radians(i * 90 + ticks * 0.06)
+            px = draw_x + int(r * math.cos(ang))
+            py = draw_y + int(r * math.sin(ang))
+            points.append((px, py))
+            
+        pygame.draw.polygon(screen, self.color, points, width=1)
+        
+        # Inner smaller rotating diamond in opposite direction
+        points_in = []
+        r_in = max(2, self.radius - 4 - pulse)
+        for i in range(num_sides):
+            ang = math.radians(i * 90 - ticks * 0.09)
+            px = draw_x + int(r_in * math.cos(ang))
+            py = draw_y + int(r_in * math.sin(ang))
+            points_in.append((px, py))
+            
+        pygame.draw.polygon(screen, WHITE, points_in, width=1)
+
 BIOME_CONFIGS = {
     'ASTEROIDS': {'name': 'Asteroid Belt', 'theme_color': GRAY, 'desc': 'Heavy Meteor Shower', 'stars_color': GRAY, 'hub': 1, 'order': 0, 'boss_count': 1},
     'VULCAN': {'name': 'Vulcan Sector', 'theme_color': ORANGE, 'desc': 'Hyper Fast Speed', 'stars_color': ORANGE, 'hub': 1, 'order': 1, 'boss_count': 1},
@@ -34,24 +297,98 @@ BIOME_CONFIGS = {
     
     'NEBULA': {'name': 'Nebula Storm', 'theme_color': PURPLE, 'desc': 'Electrical Storms', 'stars_color': PURPLE, 'hub': 2, 'order': 0, 'boss_count': 2},
     'PLASMA': {'name': 'Plasma Core', 'theme_color': GOLD, 'desc': 'High-Energy Currents', 'stars_color': GOLD, 'hub': 2, 'order': 1, 'boss_count': 2},
-    'VOID': {'name': 'Void Chasm', 'theme_color': INDIGO, 'desc': 'Zero-Gravity Abyss', 'stars_color': INDIGO, 'hub': 2, 'order': 2, 'boss_count': 2},
+    'SINGULARITY': {'name': 'Singularity Factory', 'theme_color': BLUE, 'desc': 'Reactor Meltdown', 'stars_color': BLUE, 'hub': 2, 'order': 2, 'boss_count': 1},
     
     'QUANTUM': {'name': 'Quantum Rift', 'theme_color': GREEN, 'desc': 'Dimensional Shifting', 'stars_color': GREEN, 'hub': 3, 'order': 0, 'boss_count': 2},
-    'SINGULARITY': {'name': 'Singularity Edge', 'theme_color': BLUE, 'desc': 'Gravitational Shears', 'stars_color': BLUE, 'hub': 3, 'order': 1, 'boss_count': 2},
+    'VOID': {'name': 'Void Chasm', 'theme_color': INDIGO, 'desc': 'Zero-Gravity Abyss', 'stars_color': INDIGO, 'hub': 3, 'order': 1, 'boss_count': 2},
     'ORION': {'name': 'Orion Citadel', 'theme_color': MAGENTA, 'desc': 'Overlord Fortress', 'stars_color': MAGENTA, 'hub': 3, 'order': 2, 'boss_count': 3}
 }
 
+NPC_INFO = {
+    'ENGINEERING': {
+        'name': 'Chief Sparks',
+        'color': GOLD,
+        'title': 'CHIEF ENGINEER',
+        'dialogue': {
+            1: [
+                "Ah, Captain {name}! We need 5 Matrix Cores from the Asteroid Belt to jump-start the main Safe Haven reactor.",
+                "Docking stabilizers locked. The engines on your {class_name} are running a bit hot, Captain. Try to pulse your thrust in the field.",
+                "Watch out for gravity wells in the Asteroids, Captain {name}. Keep your speed up or they will drag you in!"
+            ],
+            2: [
+                "Captain {name}, the Singularity Factory reactor is melting down! We need you to infiltrate the core and shut it down.",
+                "Your {class_name} ship has a compact signature. Perfect for squeezing through those tight corridor grids in the Factory.",
+                "Be careful of those indestructible space station walls, Captain. One bad crash will eat through your shields instantly!"
+            ],
+            3: [
+                "We're ready for the final jump, Captain {name}. The Orion Citadel is straight ahead. Let's make it count!",
+                "I've pushed the reactor output to maximum. If your {class_name}'s systems hold, you'll have all the juice you need.",
+                "Chief Vance tells me the Citadel is protected by triple shielding. Knock out the generator ships first!"
+            ]
+        }
+    },
+    'WEAPONRY': {
+        'name': 'Officer Vance',
+        'color': RED,
+        'title': 'WEAPONS OFFICER',
+        'dialogue': {
+            1: [
+                "Warp coordinates are locked to the Asteroid Belt. Be careful out there, Captain {name}.",
+                "As a {class_name}, you'll want to lean into your tactical ability. Ranger overdrive or Sniper airstrikes can save you when surrounded.",
+                "Primary lasers run on a capacitor. Watch your heat gauge at the top left, Captain! Don't overheat in a firefight."
+            ],
+            2: [
+                "This is a tight space station infiltration. Corridors are narrow, watch for turrets, and get to the center!",
+                "Dax just stocked our weapon modifiers in the depot. If you have the credits, I highly recommend the Split Shot or Piercing Laser upgrades.",
+                "The factory defenses are heavily armored, Captain {name}. If you use secondary weapons, space out your torpedoes for maximum splash impact."
+            ],
+            3: [
+                "The Overlord's fleet is massive, but we believe in you, Captain {name}. Destroy the Citadel Boss!",
+                "Officer Vance reporting. Weapons caliber checked. Your {class_name}'s loadout is cleared for deployment. Strike hard!",
+                "Remember, Captain: the Overlord's bullets are fast, but your thrusters are faster. Use dash maneuvers to glide through the bullet patterns."
+            ]
+        }
+    },
+    'SUPPLY': {
+        'name': 'Quartermaster Dax',
+        'color': CYAN,
+        'title': 'SUPPLY QUARTERMASTER',
+        'dialogue': {
+            1: [
+                "Keep an eye out for scrap debris. We can trade scrap for ship upgrades once you are back.",
+                "Need resources, Captain {name}? I've got primary weapon refills and shields ready. Don't go out with an empty clip.",
+                "Welcome to the depot. A {class_name} like you should look into boosting maximum shields early on."
+            ],
+            2: [
+                "We've unlocked the Singularity Factory portal. Safe flying, Captain {name}!",
+                "Those weapon modifiers are selling out fast. Piercing lasers are great for clearing rows of enemies, and Shield Siphon keeps your shields charged.",
+                "Got enough credits, Captain? Don't forget to stock up on flares before warp. They redirect incoming homing missiles."
+            ],
+            3: [
+                "All systems upgraded. This is the final showdown. Bring us home, Captain {name}!",
+                "Credits are useless if the Citadel destroys us. Spend everything you've got on refills and active mods now.",
+                "I've prepped the cargo bays for our escape. Make sure you make it back in one piece, Captain {name}."
+            ]
+        }
+    }
+}
+
+
 class Bullet:
-    def __init__(self, x, y, dx, dy):
+    def __init__(self, x, y, dx, dy, speed=18, life=100, piercing=False, damage=1.0, color=(255, 255, 0)):
         self.x = x
         self.y = y
         self.dx = dx
         self.dy = dy
-        self.speed = 18
+        self.speed = speed
         self.width = 16
         self.height = 16
-        self.rect = pygame.Rect(self.x - 8, self.y - 8, self.width, self.height)
+        self.rect = pygame.Rect(self.x - self.width // 2, self.y - self.height // 2, self.width, self.height)
         self.target = None
+        self.life = life
+        self.piercing = piercing
+        self.damage = damage
+        self.color = color
 
     def find_target(self, enemies, meteors, static_obstacles):
         closest_target = None
@@ -83,15 +420,15 @@ class Bullet:
 
         self.x += self.dx * self.speed
         self.y += self.dy * self.speed
-        self.rect.x = int(self.x - 8)
-        self.rect.y = int(self.y - 8)
+        self.rect.x = int(self.x - self.width // 2)
+        self.rect.y = int(self.y - self.height // 2)
 
     def draw(self, screen, camera_y, camera_x=0):
         draw_x = self.x - camera_x
         draw_y = self.y - camera_y
         start_pt = (int(draw_x - self.dx * 8), int(draw_y - self.dy * 8))
         end_pt = (int(draw_x + self.dx * 4), int(draw_y + self.dy * 4))
-        pygame.draw.line(screen, (255, 255, 0), start_pt, end_pt, width=6)
+        pygame.draw.line(screen, self.color, start_pt, end_pt, width=6)
         pygame.draw.line(screen, (255, 255, 255), start_pt, end_pt, width=2)
 
 class Torpedo:
@@ -100,13 +437,14 @@ class Torpedo:
         self.y = y
         self.dx = dx
         self.dy = dy
-        self.speed = 10
+        self.speed = 15
         self.radius = int(8 * scale)
         self.rect = pygame.Rect(self.x - self.radius, self.y - self.radius, self.radius * 2, self.radius * 2)
         self.exploded = False
         self.explosion_radius = int(120 * scale)
         self.explosion_duration = 30
         self.explosion_timer = 0
+        self.angle = 0
 
     def update(self):
         if not self.exploded:
@@ -120,9 +458,16 @@ class Torpedo:
         draw_x = self.x - camera_x
         draw_y = self.y - camera_y
         if not self.exploded:
-            glow = int(2 * math.sin(pygame.time.get_ticks() * 0.02))
-            pygame.draw.circle(screen, (255, 69, 0), (int(draw_x), int(draw_y)), self.radius + glow)
-            pygame.draw.circle(screen, (255, 215, 0), (int(draw_x), int(draw_y)), self.radius - 2)
+            ticks = pygame.time.get_ticks()
+            self.angle = math.degrees(math.atan2(self.dy, self.dx))
+            # Use a simpler drawing for torpedo body to save resources
+            f_pulse = 4 + int(3 * math.sin(ticks * 0.05))
+            body_surf = pygame.Surface((30, 16), pygame.SRCALPHA)
+            pygame.draw.rect(body_surf, (100, 100, 110), (0, 2, 22, 12), border_radius=2)
+            pygame.draw.polygon(body_surf, ORANGE, [(22, 0), (30, 8), (22, 16)])
+            pygame.draw.circle(body_surf, (255, 200, 0), (2, 8), f_pulse)
+            rot_body = pygame.transform.rotate(body_surf, -self.angle)
+            screen.blit(rot_body, (int(draw_x - rot_body.get_width()//2), int(draw_y - rot_body.get_height()//2)))
         else:
             progress = self.explosion_timer / self.explosion_duration
             current_radius = int(self.explosion_radius * progress)
@@ -145,7 +490,7 @@ class ProxBomb:
         self.exploded = False
         self.explosion_timer = 0
         self.explosion_duration = 30
-        self.explosion_radius = int(140 * scale)
+        self.explosion_radius = int(75 * scale)
         
     def update(self):
         if self.exploded:
@@ -161,20 +506,28 @@ class ProxBomb:
         draw_y = self.y - camera_y
         if self.exploded:
             progress = self.explosion_timer / self.explosion_duration
+            # Avoid per-frame surface creation for explosions
             r = int(self.explosion_radius * progress)
-            alpha = int(220 * (1.0 - progress))
-            surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
-            pygame.draw.circle(surf, (255, 69, 0, alpha // 2), (r, r), r)
-            pygame.draw.circle(surf, (255, 140, 0, alpha), (r, r), r, width=3)
-            screen.blit(surf, (int(draw_x - r), int(draw_y - r)))
+            if r > 0:
+                alpha = int(220 * (1.0 - progress))
+                s = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+                pygame.draw.circle(s, (255, 69, 0, alpha // 2), (r, r), r)
+                pygame.draw.circle(s, (255, 140, 0, alpha), (r, r), r, width=3)
+                screen.blit(s, (int(draw_x - r), int(draw_y - r)))
         else:
-            pulse = int(3 * math.sin(pygame.time.get_ticks() * 0.015))
-            pygame.draw.circle(screen, RED, (int(draw_x), int(draw_y)), 10 + pulse)
-            pygame.draw.circle(screen, GOLD, (int(draw_x), int(draw_y)), 6 + pulse)
-            pygame.draw.circle(screen, WHITE, (int(draw_x), int(draw_y)), 2)
+            ticks = pygame.time.get_ticks()
+            pulse = int(3 * math.sin(ticks * 0.015))
+            # Draw spiky mine look
+            for i in range(8):
+                ang = math.radians(i * 45 + ticks * 0.1)
+                p1 = (int(draw_x + 6 * math.cos(ang)), int(draw_y + 6 * math.sin(ang)))
+                p2 = (int(draw_x + (14 + pulse) * math.cos(ang)), int(draw_y + (14 + pulse) * math.sin(ang)))
+                pygame.draw.line(screen, GRAY, p1, p2, width=3)
+            pygame.draw.circle(screen, (40, 40, 45), (int(draw_x), int(draw_y)), 10)
+            pygame.draw.circle(screen, RED if ticks % 400 < 200 else (60, 0, 0), (int(draw_x), int(draw_y)), 6)
 
 class HomingMissile:
-    def __init__(self, x, y, dx, dy, scale=1.0):
+    def __init__(self, x, y, dx, dy, scale=1.0, shooter=None, converge_pos=None):
         self.x = x
         self.y = y
         self.dx = dx
@@ -188,16 +541,41 @@ class HomingMissile:
         self.explosion_duration = 20
         self.explosion_radius = int(90 * scale)
         self.target = None
+        self.shooter = shooter
+        self.converge_pos = converge_pos
         
-    def update(self, enemies, camera_y):
+    def update(self, enemies, camera_y, flares=None):
         if self.exploded:
             self.explosion_timer += 1
             return
             
+        # Travel to convergence point if one is set (e.g. travel to player first)
+        if self.converge_pos:
+            dist = pygame.math.Vector2(self.x, self.y).distance_to(self.converge_pos)
+            if dist < 40:
+                self.converge_pos = None # Target reached, start tracking
+            else:
+                desired = (self.converge_pos - pygame.math.Vector2(self.x, self.y)).normalize()
+                current = pygame.math.Vector2(self.dx, self.dy)
+                steer = current.lerp(desired, 0.1).normalize()
+                self.dx = steer.x
+                self.dy = steer.y
+
+        # Delete homing missile if shooter is dead
+        if self.shooter:
+            shooter_dead = getattr(self.shooter, 'is_dead', False)
+            if hasattr(self.shooter, 'life') and self.shooter.life <= 0:
+                shooter_dead = True
+            if shooter_dead:
+                self.exploded = True
+                self.explosion_timer = self.explosion_duration
+                return
+            
         # Target tracking
-        if not self.target or self.target.health <= 0:
+        if not self.converge_pos and (not self.target or self.target.health <= 0):
             closest = None
             min_d = 800.0
+            # Player missiles only target enemies, not flares
             for ent in enemies:
                 if ent.health > 0:
                     d = pygame.math.Vector2(self.x, self.y).distance_to(pygame.math.Vector2(ent.x, ent.y))
@@ -206,7 +584,7 @@ class HomingMissile:
                         closest = ent
             self.target = closest
             
-        if self.target:
+        if not self.converge_pos and self.target:
             target_pos = pygame.math.Vector2(self.target.rect.center)
             missile_pos = pygame.math.Vector2(self.x, self.y)
             desired = (target_pos - missile_pos).normalize()
@@ -226,18 +604,161 @@ class HomingMissile:
         if self.exploded:
             progress = self.explosion_timer / self.explosion_duration
             r = int(self.explosion_radius * progress)
-            alpha = int(220 * (1.0 - progress))
-            surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
-            pygame.draw.circle(surf, (0, 200, 255, alpha // 2), (r, r), r)
-            pygame.draw.circle(surf, (255, 255, 255, alpha), (r, r), r, width=2)
-            screen.blit(surf, (int(draw_x - r), int(draw_y - r)))
+            if r > 0:
+                pygame.draw.circle(screen, (0, 200, 255), (int(draw_x), int(draw_y)), r, width=2)
         else:
             angle = math.degrees(math.atan2(self.dy, self.dx))
-            missile_surf = pygame.Surface((20, 10), pygame.SRCALPHA)
-            pygame.draw.rect(missile_surf, CYAN, (0, 2, 14, 6), border_radius=2)
-            pygame.draw.polygon(missile_surf, WHITE, [(14, 0), (20, 5), (14, 10)])
+            missile_surf = pygame.Surface((24, 12), pygame.SRCALPHA)
+            # Body and Sleek Nose
+            pygame.draw.rect(missile_surf, (60, 70, 80), (4, 3, 14, 6), border_radius=1)
+            pygame.draw.polygon(missile_surf, CYAN, [(18, 2), (24, 6), (18, 10)])
+            # Fins
+            pygame.draw.line(missile_surf, GRAY, (6, 3), (2, 0), width=2)
+            pygame.draw.line(missile_surf, GRAY, (6, 9), (2, 12), width=2)
+            # Ion Exhaust
+            pygame.draw.circle(missile_surf, (0, 200, 255), (4, 6), 3)
+            
             rot_missile = pygame.transform.rotate(missile_surf, -angle)
             screen.blit(rot_missile, (int(draw_x - rot_missile.get_width() // 2), int(draw_y - rot_missile.get_height() // 2)))
+
+class SentryDrone:
+    def __init__(self, owner, color, angle_offset=0):
+        self.owner = owner
+        self.color = color
+        self.angle = angle_offset
+        self.distance = 70
+        self.last_shot = 0
+        self.shoot_delay = 500
+        self.life = 600 # 10 seconds
+        self.x = owner.x
+        self.y = owner.y
+        self.width, self.height = 16, 16
+        self.rect = pygame.Rect(0, 0, self.width, self.height)
+
+    def update(self, current_time, enemies, enemy_bullets):
+        self.life -= 1
+        self.angle += 0.05
+        self.x = self.owner.x + self.owner.width // 2 + math.cos(self.angle) * self.distance
+        self.y = self.owner.y + self.owner.height // 2 + math.sin(self.angle) * self.distance
+        self.rect.center = (int(self.x), int(self.y))
+        
+        new_bullets = []
+        if current_time - self.last_shot > self.shoot_delay:
+            self.last_shot = current_time
+            
+            # Default direction (tangent to orbit)
+            dx, dy = math.cos(self.angle + math.pi/2), math.sin(self.angle + math.pi/2)
+            
+            # Target finding for initial shot direction
+            closest_target_pos = None
+            min_dist = 500.0
+            drone_center = pygame.math.Vector2(self.rect.center)
+            
+            for target in enemies + enemy_bullets:
+                t_pos = pygame.math.Vector2(target.rect.center)
+                dist = drone_center.distance_to(t_pos)
+                if dist < min_dist:
+                    min_dist = dist
+                    closest_target_pos = t_pos
+            
+            if closest_target_pos:
+                diff = closest_target_pos - drone_center
+                if diff.length() > 0:
+                    to_target = diff.normalize()
+                    dx, dy = to_target.x, to_target.y
+
+            new_bullets.append(Bullet(self.x, self.y, dx, dy, speed=12, color=self.color))
+        return new_bullets
+
+    def draw(self, screen, camera_y, camera_x=0):
+        dx, dy = self.x - camera_x, self.y - camera_y
+        pygame.draw.circle(screen, self.color, (int(dx), int(dy)), 8, width=1)
+        pygame.draw.circle(screen, WHITE, (int(dx), int(dy)), 2)
+
+class SupportShip:
+    def __init__(self, x, y, angle, color, owner=None):
+        self.x = x
+        self.y = y
+        self.angle = angle
+        self.color = color
+        self.owner = owner
+        self.speed = 14.0
+        self.life = 180 # 3 seconds
+        self.last_shot = 0
+        self.shoot_delay = 120
+        self.width = 30
+        self.height = 30
+        rad = math.radians(self.angle)
+        self.direction = pygame.math.Vector2(math.cos(rad), math.sin(rad))
+        self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
+
+    def update(self, current_time):
+        self.x += self.direction.x * self.speed
+        self.y += self.direction.y * self.speed
+        self.rect.center = (int(self.x), int(self.y))
+        self.life -= 1
+        
+        new_projectiles = []
+        if current_time - self.last_shot > self.shoot_delay:
+            self.last_shot = current_time
+            conv = pygame.math.Vector2(self.owner.rect.center) if self.owner else None
+            new_projectiles.append(HomingMissile(self.x, self.y, self.direction.x, self.direction.y, scale=0.7, shooter=self, converge_pos=conv))
+        return new_projectiles
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        center = pygame.math.Vector2(draw_x, draw_y)
+        dir_f = self.direction
+        dir_r = pygame.math.Vector2(-self.direction.y, self.direction.x)
+        ticks = pygame.time.get_ticks()
+        pulse = (math.sin(ticks * 0.05) + 1) / 2
+
+        # Engine Flame
+        flame_len = (12 + random.randint(-4, 8)) * (0.8 + 0.4 * pulse)
+        y_jitter = random.uniform(-2, 2)
+        rear_center = center - dir_f * (self.height // 2) + dir_f * y_jitter
+        f_col = random.choice([ORANGE, YELLOW, WHITE])
+        pygame.draw.polygon(screen, f_col, [rear_center, rear_center - dir_r * 5, rear_center - dir_f * flame_len, rear_center + dir_r * 5], width=1)
+
+        # Hull (Simplified Player style)
+        hull_tip = center + dir_f * (self.height // 2)
+        hull_l = center - dir_f * (self.height // 4) - dir_r * 6
+        hull_r = center - dir_f * (self.height // 4) + dir_r * 6
+        pygame.draw.polygon(screen, self.color, [hull_tip, hull_l, hull_r])
+        
+        # Wings
+        lw_tip = center - dir_f * 5 - dir_r * (self.width // 2)
+        pygame.draw.line(screen, SLATE_GRAY, center, lw_tip, width=1)
+        rw_tip = center - dir_f * 5 + dir_r * (self.width // 2)
+        pygame.draw.line(screen, SLATE_GRAY, center, rw_tip, width=1)
+
+class Flare:
+    def __init__(self, x, y, dx=0, dy=0):
+        self.x = x
+        self.y = y
+        self.dx = dx
+        self.dy = dy
+        self.radius = 8
+        self.life_time = 180 # frames (3 seconds at 60 FPS)
+        self.life_timer = self.life_time
+        self.color = (255, 165, 0) # Orange
+        self.rect = pygame.Rect(self.x - self.radius, self.y - self.radius, self.radius * 2, self.radius * 2)
+
+    def update(self):
+        self.life_timer -= 1
+        # Flares apply velocity plus a bit of turbulence drift
+        self.x += self.dx + random.uniform(-0.3, 0.3)
+        self.y += self.dy + random.uniform(-0.3, 0.3)
+        self.rect.center = (int(self.x), int(self.y))
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        alpha = int(255 * (self.life_timer / self.life_time))
+        pulse = int(4 * math.sin(pygame.time.get_ticks() * 0.02))
+        pygame.draw.circle(screen, (*self.color, alpha // 2), (int(draw_x), int(draw_y)), self.radius + pulse)
+        pygame.draw.circle(screen, (*WHITE, alpha), (int(draw_x), int(draw_y)), self.radius)
 
 class Particle:
     def __init__(self, x, y, color):
@@ -260,16 +781,104 @@ class Particle:
         self.dy *= 0.96
 
     def draw(self, screen, camera_y, camera_x=0):
+        draw_x, draw_y = int(self.x - camera_x), int(self.y - camera_y)
+        r = self.radius
+        pygame.draw.rect(screen, self.color, (draw_x - r, draw_y - r, r * 2, r * 2), width=1)
+
+class EngineTrailParticle:
+    def __init__(self, x, y, direction, class_name):
+        self.x = x + random.uniform(-4, 4)
+        self.y = y + random.uniform(-4, 4)
+        
+        # Eject in the opposite direction of movement with a slight spread
+        spread_angle = random.uniform(-0.18, 0.18)
+        opposite_dir = (-direction).rotate_rad(spread_angle)
+        speed = random.uniform(2.5, 6.0)
+        
+        self.dx = opposite_dir.x * speed
+        self.dy = opposite_dir.y * speed
+        self.radius = random.randint(4, 8)
+        self.life = random.randint(10, 18)
+        self.max_life = self.life
+        
+        colors = {
+            'RANGER': (0, 255, 255),
+            'ENGINEER': (255, 215, 0),
+            'VANGUARD': (255, 0, 255),
+            'SNIPER': (255, 255, 0),
+            'ASSASSIN': (138, 43, 226)
+        }
+        self.color = colors.get(class_name, (255, 120, 0))
+
+    def update(self):
+        self.x += self.dx
+        self.y += self.dy
+        self.life -= 1
+        self.dx *= 0.94
+        self.dy *= 0.94
+        self.radius = max(0.5, self.radius - 0.3)
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x, draw_y = int(self.x - camera_x), int(self.y - camera_y)
         alpha = int(255 * (self.life / self.max_life))
-        surf = pygame.Surface((self.radius * 2, self.radius * 2), pygame.SRCALPHA)
-        r, g, b = self.color
-        pygame.draw.circle(surf, (r, g, b, alpha), (self.radius, self.radius), self.radius)
+        if alpha <= 0: return
+        
+        surf = pygame.Surface((self.radius * 4, self.radius * 4), pygame.SRCALPHA)
+        pygame.draw.circle(surf, (*self.color, alpha // 4), (int(self.radius * 2), int(self.radius * 2)), int(self.radius * 2))
+        pygame.draw.circle(surf, (255, 255, 255, alpha // 2), (int(self.radius * 2), int(self.radius * 2)), int(self.radius * 0.8))
+        screen.blit(surf, (draw_x - int(self.radius * 2), draw_y - int(self.radius * 2)))
+
+class SmallPortal:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.radius = 30
+        self.rect = pygame.Rect(self.x - 15, self.y - 15, 30, 30)
+
+    def update(self):
+        pass
+
+    def draw(self, screen, camera_y, camera_x=0):
         draw_x = self.x - camera_x
         draw_y = self.y - camera_y
-        screen.blit(surf, (int(draw_x) - self.radius, int(draw_y) - self.radius))
+        ticks = pygame.time.get_ticks()
+        
+        for i in range(3):
+            r = self.radius - i * 8 + int(4 * math.sin(ticks * 0.01 + i))
+            if r > 5:
+                surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+                color = (0, 255, 255, 120 - i * 35)
+                pygame.draw.circle(surf, color, (r, r), r, width=2)
+                angle = ticks * 0.002 + i * (math.pi / 2)
+                dot_x = r + int((r - 2) * math.cos(angle))
+                dot_y = r + int((r - 2) * math.sin(angle))
+                pygame.draw.circle(surf, WHITE, (dot_x, dot_y), 2)
+                
+                screen.blit(surf, (int(draw_x - r), int(draw_y - r)))
+
+class ShockwaveRing:
+    def __init__(self, x, y, max_radius, color, duration=24):
+        self.x = x
+        self.y = y
+        self.max_radius = max_radius
+        self.color = color
+        self.life = duration
+        self.max_life = duration
+        
+    def update(self):
+        self.life -= 1
+        return self.life > 0
+        
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = int(self.x - camera_x)
+        draw_y = int(self.y - camera_y)
+        progress = 1.0 - (self.life / self.max_life)
+        r = int(self.max_radius * progress)
+        if r > 0:
+            pygame.draw.circle(screen, self.color, (draw_x, draw_y), r, width=1)
 
 class EnemyBullet:
-    def __init__(self, x, y, dx, dy, color=(255, 100, 100), speed=6, size=8, is_gravity=False, is_homing=False, target_player=None):
+    def __init__(self, x, y, dx, dy, color=(255, 100, 100), speed=6, size=8, is_gravity=False, is_homing=False, target_player=None, telegraph_frames=6, life_time=0, shooter=None):
         self.x = x
         self.y = y
         self.dx = dx
@@ -283,15 +892,53 @@ class EnemyBullet:
         self.is_gravity = is_gravity
         self.is_homing = is_homing
         self.target_player = target_player
+        self.telegraph_frames = telegraph_frames
+        self.telegraph_timer = telegraph_frames # Frames before bullet becomes active
+        self.life_time = life_time # Frames before bullet self-detonates
+        self.life_timer = life_time
+        self.shooter = shooter
 
-    def update(self):
-        if self.is_homing and self.target_player:
-            player_center = pygame.math.Vector2(self.target_player.rect.center)
-            to_player = player_center - pygame.math.Vector2(self.x, self.y)
-            if to_player.length() > 5:
-                to_player = to_player.normalize()
+    def update(self, flares=None):
+        # Delete homing bullet if the shooter died
+        if self.is_homing and self.shooter:
+            shooter_dead = getattr(self.shooter, 'is_dead', False)
+            if hasattr(self.shooter, 'health') and self.shooter.health <= 0:
+                shooter_dead = True
+            if shooter_dead:
+                self.life_time = 1
+                self.life_timer = 0
+                return
+
+        if self.telegraph_timer > 0:
+            self.telegraph_timer -= 1
+            return
+        
+        if self.life_time > 0:
+            self.life_timer -= 1
+
+        # Homing missiles target flares if they are nearby
+        current_target_pos = None
+        if self.is_homing:
+            if flares:
+                closest_flare = None
+                min_dist = 250
+                for f in flares:
+                    d = pygame.math.Vector2(self.x, self.y).distance_to(pygame.math.Vector2(f.x, f.y))
+                    if d < min_dist:
+                        min_dist = d
+                        closest_flare = f
+                if closest_flare:
+                    current_target_pos = pygame.math.Vector2(closest_flare.x, closest_flare.y)
+
+            if not current_target_pos and self.target_player:
+                current_target_pos = pygame.math.Vector2(self.target_player.rect.center)
+
+        if current_target_pos:
+            to_target = current_target_pos - pygame.math.Vector2(self.x, self.y)
+            if to_target.length() > 5:
+                to_target = to_target.normalize()
                 dir_vec = pygame.math.Vector2(self.dx, self.dy).normalize()
-                dir_vec += to_player * 0.05
+                dir_vec += to_target * 0.05
                 dir_vec = dir_vec.normalize()
                 self.dx = dir_vec.x
                 self.dy = dir_vec.y
@@ -301,7 +948,7 @@ class EnemyBullet:
             to_bullet = pygame.math.Vector2(self.x, self.y) - player_center
             dist = to_bullet.length()
             if dist < 180:
-                pull_strength = (180 - dist) * 0.015
+                pull_strength = (180 - dist) * 0.003 # 5x weaker pull on player
                 self.target_player.x += to_bullet.normalize().x * pull_strength
                 self.target_player.y += to_bullet.normalize().y * pull_strength
                 self.target_player.rect.x = int(self.target_player.x)
@@ -315,12 +962,22 @@ class EnemyBullet:
     def draw(self, screen, camera_y, camera_x=0):
         draw_x = self.x - camera_x
         draw_y = self.y - camera_y
-        glow_size = self.size + 4 + int(2 * math.sin(pygame.time.get_ticks() * 0.03))
-        surf = pygame.Surface((glow_size * 2, glow_size * 2), pygame.SRCALPHA)
-        pygame.draw.circle(surf, (*self.color, 80), (glow_size, glow_size), glow_size)
-        pygame.draw.circle(surf, (*self.color, 160), (glow_size, glow_size), self.size)
-        pygame.draw.circle(surf, (255, 255, 255, 245), (glow_size, glow_size), max(1, self.size - 2))
-        screen.blit(surf, (int(draw_x) - glow_size, int(draw_y) - glow_size))
+        if self.telegraph_timer > 0:
+            radius = self.size + 6 + int(2 * math.sin(pygame.time.get_ticks() * 0.03))
+            pygame.draw.circle(screen, self.color, (int(draw_x), int(draw_y)), radius, width=2)
+            return
+
+        # Direct drawing instead of surface per bullet
+        # 1. Laser tracer trail
+        trail_len = 16
+        back_x = draw_x - self.dx * trail_len
+        back_y = draw_y - self.dy * trail_len
+        pygame.draw.line(screen, self.color, (int(draw_x), int(draw_y)), (int(back_x), int(back_y)), width=4)
+        pygame.draw.line(screen, WHITE, (int(draw_x), int(draw_y)), (int(back_x + self.dx * 4), int(back_y + self.dy * 4)), width=2)
+
+        # 2. Bullet core
+        pygame.draw.circle(screen, self.color, (int(draw_x), int(draw_y)), self.size + 2)
+        pygame.draw.circle(screen, WHITE, (int(draw_x), int(draw_y)), max(1, self.size - 2))
         
         if self.is_gravity:
             pulse = int(4 * math.sin(pygame.time.get_ticks() * 0.01))
@@ -360,6 +1017,23 @@ class ShieldCrystal:
         pygame.draw.circle(surf, (0, 255, 255, 10), (250, 250), 250, width=1)
         screen.blit(surf, (int(draw_x - 250), int(draw_y - 250)))
 
+class PlayerShieldCrystal(ShieldCrystal):
+    def __init__(self, x, y):
+        super().__init__(x, y)
+        self.health = 5 # Slightly tougher than generic ShieldCrystal
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        t = pygame.time.get_ticks() * 0.005 + self.pulse_timer
+        offset = int(4 * math.sin(t))
+        points = [ (draw_x, draw_y - 14 - offset), (draw_x + 10 + offset, draw_y), (draw_x, draw_y + 14 + offset), (draw_x - 10 - offset, draw_y) ]
+        pygame.draw.polygon(screen, CYAN, points)
+        pygame.draw.polygon(screen, WHITE, points, width=1)
+        surf = pygame.Surface((500, 500), pygame.SRCALPHA)
+        pygame.draw.circle(surf, (0, 255, 255, 10), (250, 250), 250, width=1)
+        screen.blit(surf, (int(draw_x - 250), int(draw_y - 250)))
+
 class GravityWell:
     def __init__(self, x, y):
         self.x = x
@@ -368,12 +1042,13 @@ class GravityWell:
         self.rect = pygame.Rect(self.x - 20, self.y - 20, 40, 40)
         self.pull_force = 0.5
 
-    def update(self, player, bullets, meteors, static_obstacles):
+    def update(self, player, bullets, meteors, static_obstacles, game_instance=None):
         p_pos = pygame.math.Vector2(player.x + player.width // 2, player.y + player.height // 2)
         well_pos = pygame.math.Vector2(self.x, self.y)
         dist = p_pos.distance_to(well_pos)
         if dist < self.radius and dist > 10:
-            pull = (well_pos - p_pos).normalize() * (self.pull_force * (1.0 - dist / self.radius))
+            # Player pull is 5x weaker now
+            pull = (well_pos - p_pos).normalize() * (self.pull_force * 0.2 * (1.0 - dist / self.radius))
             player.x += pull.x
             player.y += pull.y
         
@@ -381,24 +1056,41 @@ class GravityWell:
             b_pos = pygame.math.Vector2(b.x, b.y)
             dist = b_pos.distance_to(well_pos)
             if dist < self.radius and dist > 10:
-                pull = (well_pos - b_pos).normalize() * (self.pull_force * 0.7 * (1.0 - dist / self.radius))
+                # Median pull and curve on projectiles (pull = 1.6, lerp = 0.15)
+                pull = (well_pos - b_pos).normalize() * (self.pull_force * 1.6 * (1.0 - dist / self.radius))
                 b.x += pull.x
                 b.y += pull.y
-                # Curve bullet flight path slightly
+                # Curve bullet flight path towards black hole center
                 desired_dir = (well_pos - b_pos).normalize()
                 current_dir = pygame.math.Vector2(b.dx, b.dy)
-                new_dir = current_dir.lerp(desired_dir, 0.05).normalize()
+                new_dir = current_dir.lerp(desired_dir, 0.15).normalize()
                 b.dx = new_dir.x
                 b.dy = new_dir.y
 
-        for m in meteors + static_obstacles:
+        for m in meteors[:]:
             m_pos = pygame.math.Vector2(m.rect.center)
             dist = m_pos.distance_to(well_pos)
             if dist < self.radius and dist > 10:
-                pull = (well_pos - m_pos).normalize() * (self.pull_force * 0.4 * (1.0 - dist / self.radius))
+                if dist < 30: # Close enough to be sucked in and destroyed
+                    if m in meteors:
+                        meteors.remove(m)
+                    if game_instance:
+                        game_instance.spawn_explosion(m.rect.centerx, m.rect.centery, [(138, 43, 226), (75, 0, 130), (255, 255, 255)], 15)
+                        if SOUNDS: SOUNDS.play('explosion')
+                    continue
+                pull = (well_pos - m_pos).normalize() * (self.pull_force * 0.6 * (1.0 - dist / self.radius))
                 m.x += pull.x
                 m.y += pull.y
                 m.rect.center = (int(m.x), int(m.y))
+                
+        for obs in static_obstacles:
+            obs_pos = pygame.math.Vector2(obs.rect.center)
+            dist = obs_pos.distance_to(well_pos)
+            if dist < self.radius and dist > 10:
+                pull = (well_pos - obs_pos).normalize() * (self.pull_force * 0.4 * (1.0 - dist / self.radius))
+                obs.x += pull.x
+                obs.y += pull.y
+                obs.rect.center = (int(obs.x), int(obs.y))
 
     def draw(self, screen, camera_y, camera_x=0):
         draw_x = self.x - camera_x
@@ -412,6 +1104,74 @@ class GravityWell:
             screen.blit(surf, (int(draw_x - r), int(draw_y - r)))
         pygame.draw.circle(screen, BLACK, (int(draw_x), int(draw_y)), 10)
         pygame.draw.circle(screen, PURPLE, (int(draw_x), int(draw_y)), 10, width=1)
+
+class DataUplink:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.radius = 24
+        self.rect = pygame.Rect(self.x - self.radius, self.y - self.radius, self.radius * 2, self.radius * 2)
+        self.hacked = False
+        self.hack_progress = 0.0 # 0 to 1.0
+        
+    def update(self, player):
+        if self.hacked:
+            return False
+            
+        p_pos = pygame.math.Vector2(player.x + player.width // 2, player.y + player.height // 2)
+        u_pos = pygame.math.Vector2(self.x, self.y)
+        dist = p_pos.distance_to(u_pos)
+        
+        if dist < 150: # Hacking radius
+            self.hack_progress += 0.0125 # Hacks over ~1.3 seconds
+            if self.hack_progress >= 1.0:
+                self.hacked = True
+                player.add_credits(150)
+                player.award_xp(40)
+                player.scraps += random.randint(2, 4)
+                return True
+        else:
+            self.hack_progress = max(0.0, self.hack_progress - 0.005)
+        return False
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        ticks = pygame.time.get_ticks()
+        
+        # Draw rotating wireframe hexagon
+        num_sides = 6
+        glow = int(3 * math.sin(ticks * 0.01))
+        r = self.radius + glow
+        points = []
+        for i in range(num_sides):
+            ang = math.radians(i * (360 / num_sides) + ticks * 0.04)
+            px = draw_x + int(r * math.cos(ang))
+            py = draw_y + int(r * math.sin(ang))
+            points.append((px, py))
+            
+        color = CYAN if not self.hacked else GREEN
+        pygame.draw.polygon(screen, color, points, width=1)
+        
+        # Inner antenna lines
+        pygame.draw.line(screen, color, (draw_x, draw_y - r), (draw_x, draw_y + r), 1)
+        pygame.draw.line(screen, color, (draw_x - r, draw_y), (draw_x + r, draw_y), 1)
+        
+        # Draw hack progress circle
+        if self.hack_progress > 0 and not self.hacked:
+            pct_r = int(self.radius * 0.6 * self.hack_progress)
+            pygame.draw.circle(screen, GREEN, (int(draw_x), int(draw_y)), pct_r, width=1)
+            
+        # Draw label
+        font = pygame.font.SysFont("Arial", 12, bold=True)
+        lbl_text = "DATA TERMINAL" if not self.hacked else "TERMINAL DOCKED"
+        lbl = font.render(lbl_text, True, color)
+        screen.blit(lbl, (draw_x - lbl.get_width() // 2, draw_y - r - 16))
+        
+        if self.hack_progress > 0 and not self.hacked:
+            pct_text = f"{int(self.hack_progress * 100)}%"
+            pct_lbl = font.render(pct_text, True, GREEN)
+            screen.blit(pct_lbl, (draw_x - pct_lbl.get_width() // 2, draw_y + r + 5))
 
 class SubBossEntity:
     def __init__(self, name, max_health, color, width, height, x_offset, y_offset, behavior_type):
@@ -458,6 +1218,24 @@ class SubBossEntity:
     def draw(self, screen, camera_y, camera_x=0):
         draw_x = self.x - camera_x
         draw_y = self.y - camera_y
+        
+        if "STABILIZER" in self.name.upper() or "REACTOR" in self.name.upper():
+            # Draw factory stabilizer/generator
+            # Circular outer ring with rotating energy nodes
+            pygame.draw.circle(screen, (30, 30, 32), (int(draw_x), int(draw_y)), self.width // 2, width=1)
+            # Energy lines
+            ticks = pygame.time.get_ticks()
+            for angle in range(0, 360, 60):
+                rad = math.radians(angle + ticks * 0.05)
+                ex = draw_x + (self.width // 2 - 8) * math.cos(rad)
+                ey = draw_y + (self.width // 2 - 8) * math.sin(rad)
+                pygame.draw.circle(screen, CYAN, (int(ex), int(ey)), 4, width=1)
+            # Core
+            pulse = 10 + int(5 * math.sin(ticks * 0.02))
+            pygame.draw.circle(screen, (0, 100, 255), (int(draw_x), int(draw_y)), pulse, width=1)
+            pygame.draw.circle(screen, WHITE, (int(draw_x), int(draw_y)), 2)
+            return
+
         center = pygame.math.Vector2(draw_x, draw_y)
         dir_f = pygame.math.Vector2(0, 1) # Forward is down
         dir_r = pygame.math.Vector2(1, 0) # Right is right
@@ -465,39 +1243,40 @@ class SubBossEntity:
         # 1. ENGINES FLAMES
         flicker = random.randint(0, 12)
         flame_color = self.color
-        flame_inner = WHITE if self.color != WHITE else YELLOW
         
         rear_pos = center - dir_f * (self.height // 2)
         pygame.draw.polygon(screen, flame_color, [
             rear_pos - dir_r * (self.width // 6),
             rear_pos - dir_f * (15 + flicker),
             rear_pos + dir_r * (self.width // 6)
-        ])
-        pygame.draw.polygon(screen, flame_inner, [
-            rear_pos - dir_r * (self.width // 12),
-            rear_pos - dir_f * (8 + flicker * 0.6),
-            rear_pos + dir_r * (self.width // 12)
-        ])
+        ], width=1)
         
-        # 2. HULL DRAWING
-        lw_tip = center - dir_r * (self.width // 2) - dir_f * (self.height // 4)
-        rw_tip = center + dir_r * (self.width // 2) - dir_f * (self.height // 4)
-        nose = center + dir_f * (self.height // 2)
-        tail = center - dir_f * (self.height // 3)
+        # 2. WINGS
+        lw_tip = center - dir_f * 5 - dir_r * (self.width // 2)
+        lw_base_in = center - dir_f * (self.height // 2) - dir_r * 5
+        lw_base_out = center - dir_f * (self.height // 3) - dir_r * (self.width // 2)
+        pygame.draw.polygon(screen, SLATE_GRAY, [center, lw_tip, lw_base_out, lw_base_in])
         
-        pygame.draw.polygon(screen, SLATE_GRAY, [nose, lw_tip, tail, rw_tip])
-        pygame.draw.polygon(screen, self.color, [nose, lw_tip, tail, rw_tip], width=2)
-        
-        pygame.draw.polygon(screen, self.color, [
-            center + dir_f * (self.height // 4),
-            center - dir_r * (self.width // 4) - dir_f * (self.height // 6),
-            center - dir_f * (self.height // 4),
-            center + dir_r * (self.width // 4) - dir_f * (self.height // 6)
-        ])
+        rw_tip = center - dir_f * 5 + dir_r * (self.width // 2)
+        rw_base_in = center - dir_f * (self.height // 2) + dir_r * 5
+        rw_base_out = center - dir_f * (self.height // 3) + dir_r * (self.width // 2)
+        pygame.draw.polygon(screen, SLATE_GRAY, [center, rw_tip, rw_base_out, rw_base_in])
+
+        # 3. MAIN HULL (Triangle shape)
+        hull_tip = center + dir_f * (self.height // 2)
+        hull_left = center - dir_f * (self.height // 4) - dir_r * (self.width // 5)
+        hull_right = center - dir_f * (self.height // 4) + dir_r * (self.width // 5)
+        pygame.draw.polygon(screen, self.color, [hull_tip, hull_left, hull_right])
+
+        # 4. COCKPIT GLASS
+        glass_tip = center + dir_f * (self.height // 3)
+        glass_left = center + dir_f * (self.height // 8) - dir_r * (self.width // 10)
+        glass_right = center + dir_f * (self.height // 8) + dir_r * (self.width // 10)
+        pygame.draw.polygon(screen, WHITE, [glass_tip, glass_left, glass_right])
         
         pulse_r = 5 + int(3 * math.sin(pygame.time.get_ticks() * 0.02))
-        pygame.draw.circle(screen, self.color, (int(center.x), int(center.y + 4)), pulse_r + 2)
-        pygame.draw.circle(screen, WHITE, (int(center.x), int(center.y + 4)), max(1, pulse_r - 2))
+        pygame.draw.circle(screen, self.color, (int(center.x), int(center.y + 4)), pulse_r + 2, width=1)
+        pygame.draw.circle(screen, WHITE, (int(center.x), int(center.y + 4)), 2)
 
 class Boss:
     def __init__(self, zone, y):
@@ -521,15 +1300,19 @@ class Boss:
         zone_keys = ['ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'VOID', 'QUANTUM', 'SINGULARITY', 'ORION']
         diff_idx = zone_keys.index(zone) if zone in zone_keys else 0
         
-        # Boss difficulty adjustments: health scales up, delays scale down in later levels
-        base_max_health = 35 + diff_idx * 12
-        self.shoot_delay = max(500, 1500 - diff_idx * 110)
+        # Boss difficulty adjustments: start harder, but scale more gently later on
+        base_max_health = 42 + diff_idx * 8
+        self.shoot_delay = max(650, 1350 - diff_idx * 75)
         self.max_health = base_max_health
         self.health = self.max_health
         
         # Setup SubBoss Entities
         self.sub_bosses = []
-        if self.boss_count == 1:
+        if zone == 'SINGULARITY':
+            self.sub_bosses.append(SubBossEntity("Stabilizer Alpha", self.max_health // 3, self.color, 80, 80, 0, 0, 'tri_1'))
+            self.sub_bosses.append(SubBossEntity("Stabilizer Beta", self.max_health // 3, self.color, 80, 80, 0, 0, 'tri_2'))
+            self.sub_bosses.append(SubBossEntity("Stabilizer Gamma", self.max_health // 3, self.color, 80, 80, 0, 0, 'tri_3'))
+        elif self.boss_count == 1:
             self.sub_bosses.append(SubBossEntity(self.name, self.max_health, self.color, 120, 80, 0, 0, 'center'))
         elif self.boss_count == 2:
             self.sub_bosses.append(SubBossEntity(self.name + " Alpha", self.max_health // 2, self.color, 90, 60, -120, 0, 'left'))
@@ -563,11 +1346,47 @@ class Boss:
                                              [(255, 69, 0), (255, 140, 0), (255, 255, 0), (255, 255, 255)], 8)
             return
 
+        if self.zone == 'SINGULARITY':
+            # Remain stationary at reactor core room center
+            self.x = VIRTUAL_WIDTH // 2
+            self.y = -3000
+            self.appearance_timer = 0
+            
+            ent_center = pygame.math.Vector2(self.x, self.y)
+            player_center = pygame.math.Vector2(player.rect.center)
+            dist_to_player = ent_center.distance_to(player_center)
+            
+            t = pygame.time.get_ticks() * 0.002
+            self.angle_offset += 0.03
+            for ent in self.sub_bosses:
+                ent.update_position(self.x, self.y, t)
+                
+            active_stabilizers = [sb for sb in self.sub_bosses if not sb.is_dead]
+            self.shielded = len(active_stabilizers) > 0
+            
+            # Firing logic: only fire if player is inside the core room (dist < 700)
+            if dist_to_player < 700:
+                for ent in self.sub_bosses:
+                    if ent.is_dead:
+                        continue
+                    if current_time - ent.last_shot > self.shoot_delay:
+                        ent.last_shot = current_time
+                        ent_center_node = pygame.math.Vector2(ent.rect.center)
+                        dir_to_player = (player_center - ent_center_node).normalize()
+                        spawn_offset = ent.width // 2 + 20
+                        spawn_pos = ent_center_node + dir_to_player * spawn_offset
+                        
+                        # Manageable homing bullet stream (2 tracking projectiles at a time)
+                        perp_vec = pygame.math.Vector2(-dir_to_player.y, dir_to_player.x) * 15
+                        projectiles_list.append(EnemyBullet(spawn_pos.x - perp_vec.x, spawn_pos.y - perp_vec.y, dir_to_player.x, dir_to_player.y, color=BLUE, speed=5.5, size=11, is_gravity=True, is_homing=True, target_player=player, shooter=ent))
+                        projectiles_list.append(EnemyBullet(spawn_pos.x + perp_vec.x, spawn_pos.y + perp_vec.y, dir_to_player.x, dir_to_player.y, color=BLUE, speed=5.5, size=11, is_gravity=True, is_homing=True, target_player=player, shooter=ent))
+            return
+
         if hasattr(self, 'appearance_timer') and self.appearance_timer > 0:
             self.appearance_timer -= 1
             target_y = player.y - 450
             self.y += (target_y - self.y) * 0.05
-            self.x = VIRTUAL_WIDTH // 2
+            self.x = player.x + player.width // 2
             for ent in self.sub_bosses:
                 ent.update_position(self.x, self.y, 0)
                 # Spawn incoming portal particle sparks
@@ -588,13 +1407,14 @@ class Boss:
                     crystal.update()
             return
 
-        # Boss slowly creeps closer to the player over time
+        # Boss slowly creeps closer to the player over time while staying visible
         self.boss_player_dist = max(100.0, self.boss_player_dist - 0.25)
         target_y = player.y - self.boss_player_dist
         self.y += (target_y - self.y) * 0.03
         
         t = pygame.time.get_ticks() * 0.002
-        self.x = VIRTUAL_WIDTH // 2 + 250 * math.sin(t)
+        target_x = (player.x + player.width // 2) + 220 * math.sin(t)
+        self.x += (target_x - self.x) * 0.06
         
         self.angle_offset += 0.03
         
@@ -614,7 +1434,10 @@ class Boss:
         elif self.zone == 'ASTEROIDS':
             self.gravity_well.x = self.x
             self.gravity_well.y = self.y
-            self.gravity_well.update(player, game_instance.bullets, game_instance.meteors, game_instance.static_obstacles)
+            self.gravity_well.update(player, game_instance.bullets, game_instance.meteors, game_instance.static_obstacles, game_instance)
+        elif self.zone == 'SINGULARITY':
+            active_stabilizers = [sb for sb in self.sub_bosses if not sb.is_dead]
+            self.shielded = len(active_stabilizers) > 0
             
         # Firing logic for each active sub-boss
         for ent in self.sub_bosses:
@@ -625,48 +1448,54 @@ class Boss:
                 ent_center = pygame.math.Vector2(ent.rect.center)
                 player_center = pygame.math.Vector2(player.rect.center)
                 dir_to_player = (player_center - ent_center).normalize()
+                spawn_offset = ent.width // 2 + 20
+                spawn_pos = ent_center + dir_to_player * spawn_offset
                 
-                # Biome-specific custom bullet attacks (harder in later levels!)
+                # Balanced Biome-specific custom bullet attacks (no double duplication, reduced spam)
                 if self.zone == 'AQUARIS':
                     for rot in [-15, 0, 15]:
                         r_dir = dir_to_player.rotate(rot)
-                        projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, r_dir.x, r_dir.y, color=CYAN, speed=5.5))
+                        projectiles_list.append(EnemyBullet(spawn_pos.x, spawn_pos.y, r_dir.x, r_dir.y, color=CYAN, speed=7.0))
                 elif self.zone == 'VULCAN':
-                    projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, dir_to_player.x, dir_to_player.y, color=ORANGE, speed=6.5))
+                    projectiles_list.append(EnemyBullet(spawn_pos.x, spawn_pos.y, dir_to_player.x, dir_to_player.y, color=ORANGE, speed=8.5))
                     r_vec = pygame.math.Vector2(-dir_to_player.y, dir_to_player.x) * 35
-                    projectiles_list.append(EnemyBullet(ent_center.x - r_vec.x, ent_center.y - r_vec.y, dir_to_player.x, dir_to_player.y, color=YELLOW, speed=6.5))
-                    projectiles_list.append(EnemyBullet(ent_center.x + r_vec.x, ent_center.y + r_vec.y, dir_to_player.x, dir_to_player.y, color=YELLOW, speed=6.5))
+                    projectiles_list.append(EnemyBullet(spawn_pos.x - r_vec.x, spawn_pos.y - r_vec.y, dir_to_player.x, dir_to_player.y, color=YELLOW, speed=7.5))
+                    projectiles_list.append(EnemyBullet(spawn_pos.x + r_vec.x, spawn_pos.y + r_vec.y, dir_to_player.x, dir_to_player.y, color=YELLOW, speed=7.5))
                 elif self.zone == 'ASTEROIDS':
-                    projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, dir_to_player.x, dir_to_player.y, color=PURPLE, speed=5))
-                    for angle in range(0, 360, 90):
+                    projectiles_list.append(EnemyBullet(spawn_pos.x, spawn_pos.y, dir_to_player.x, dir_to_player.y, color=PURPLE, speed=7.5))
+                    for angle in [0, 90, 180, 270]:
                         rad = math.radians(angle + math.degrees(self.angle_offset))
-                        projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, math.cos(rad), math.sin(rad), color=PURPLE, speed=5))
+                        projectiles_list.append(EnemyBullet(spawn_pos.x, spawn_pos.y, math.cos(rad), math.sin(rad), color=PURPLE, speed=6.0))
                 elif self.zone == 'NEBULA':
-                    for rot in [-20, 0, 20]:
+                    for rot in [-15, 0, 15]:
                         r_dir = dir_to_player.rotate(rot)
-                        projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, r_dir.x, r_dir.y, color=PURPLE, speed=6.0, size=9))
+                        projectiles_list.append(EnemyBullet(spawn_pos.x, spawn_pos.y, r_dir.x, r_dir.y, color=PURPLE, speed=7.5, size=9))
                 elif self.zone == 'PLASMA':
-                    projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, dir_to_player.x, dir_to_player.y, color=GOLD, speed=5.5, size=8, is_homing=True, target_player=player))
+                    # 2 tracking projectiles at a time
+                    perp_vec = pygame.math.Vector2(-dir_to_player.y, dir_to_player.x) * 15
+                    projectiles_list.append(EnemyBullet(spawn_pos.x - perp_vec.x, spawn_pos.y - perp_vec.y, dir_to_player.x, dir_to_player.y, color=GOLD, speed=7.5, size=8, is_homing=True, target_player=player, shooter=ent))
+                    projectiles_list.append(EnemyBullet(spawn_pos.x + perp_vec.x, spawn_pos.y + perp_vec.y, dir_to_player.x, dir_to_player.y, color=GOLD, speed=7.5, size=8, is_homing=True, target_player=player, shooter=ent))
                 elif self.zone == 'VOID':
-                    projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, dir_to_player.x, dir_to_player.y, color=INDIGO, speed=4.5, size=10, is_gravity=True, target_player=player))
+                    projectiles_list.append(EnemyBullet(spawn_pos.x, spawn_pos.y, dir_to_player.x, dir_to_player.y, color=INDIGO, speed=6.5, size=10, is_gravity=True, target_player=player))
                 elif self.zone == 'QUANTUM':
-                    for angle in range(0, 360, 60):
+                    for angle in [0, 60, 120, 180, 240, 300]:
                         rad = math.radians(angle + math.degrees(self.angle_offset))
-                        projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, math.cos(rad), math.sin(rad), color=GREEN, speed=5.0, size=8))
-                elif self.zone == 'SINGULARITY':
-                    projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, dir_to_player.x, dir_to_player.y, color=BLUE, speed=4.0, size=11, is_gravity=True, is_homing=True, target_player=player))
+                        projectiles_list.append(EnemyBullet(spawn_pos.x, spawn_pos.y, math.cos(rad), math.sin(rad), color=GREEN, speed=6.5, size=8))
                 elif self.zone == 'ORION':
                     if ent.behavior_type == 'tri_1':
-                        projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, dir_to_player.x, dir_to_player.y, color=MAGENTA, speed=6.0, size=8, is_homing=True, target_player=player))
+                        # 2 tracking projectiles at a time
+                        perp_vec = pygame.math.Vector2(-dir_to_player.y, dir_to_player.x) * 15
+                        projectiles_list.append(EnemyBullet(spawn_pos.x - perp_vec.x, spawn_pos.y - perp_vec.y, dir_to_player.x, dir_to_player.y, color=MAGENTA, speed=7.5, size=8, is_homing=True, target_player=player, shooter=ent))
+                        projectiles_list.append(EnemyBullet(spawn_pos.x + perp_vec.x, spawn_pos.y + perp_vec.y, dir_to_player.x, dir_to_player.y, color=MAGENTA, speed=7.5, size=8, is_homing=True, target_player=player, shooter=ent))
                     elif ent.behavior_type == 'tri_2':
-                        for offset in [-25, 0, 25]:
+                        for offset in [-15, 15]:
                             r = math.radians(math.degrees(math.atan2(dir_to_player.y, dir_to_player.x)) + offset)
-                            projectiles_list.append(EnemyBullet(ent_center.x, ent_center.y, math.cos(r), math.sin(r), color=GOLD, speed=6.5, size=7))
+                            projectiles_list.append(EnemyBullet(spawn_pos.x, spawn_pos.y, math.cos(r), math.sin(r), color=GOLD, speed=8.0, size=7))
                     else:
                         perp_dx = -dir_to_player.y
                         perp_dy = dir_to_player.x
-                        projectiles_list.append(EnemyBullet(ent_center.x - perp_dx * 12, ent_center.y - perp_dy * 12, dir_to_player.x, dir_to_player.y, color=INDIGO, speed=7.0, size=6))
-                        projectiles_list.append(EnemyBullet(ent_center.x + perp_dx * 12, ent_center.y + perp_dy * 12, dir_to_player.x, dir_to_player.y, color=INDIGO, speed=7.0, size=6))
+                        projectiles_list.append(EnemyBullet(spawn_pos.x - perp_dx * 12, spawn_pos.y - perp_dy * 12, dir_to_player.x, dir_to_player.y, color=INDIGO, speed=8.5, size=6))
+                        projectiles_list.append(EnemyBullet(spawn_pos.x + perp_dx * 12, spawn_pos.y + perp_dy * 12, dir_to_player.x, dir_to_player.y, color=INDIGO, speed=8.5, size=6))
 
     def draw(self, screen, camera_y, camera_x=0):
         if self.is_dead:
@@ -682,6 +1511,43 @@ class Boss:
                     pygame.draw.circle(screen, ORANGE, (int(draw_x + random.randint(-10, 10)), int(draw_y + random.randint(-10, 10))), 6)
             return
         
+        if self.zone == 'SINGULARITY':
+            # Draw a massive Central Reactor Core (a black hole inside mechanical shields)
+            draw_x = self.x - camera_x
+            draw_y = self.y - camera_y
+            ticks = pygame.time.get_ticks()
+            
+            # 1. Outer structure ring
+            pygame.draw.circle(screen, (70, 70, 75), (int(draw_x), int(draw_y)), 100)
+            pygame.draw.circle(screen, (35, 35, 38), (int(draw_x), int(draw_y)), 100, width=5)
+            
+            # 2. Rotating warning stripes/girders
+            for i in range(8):
+                angle = math.radians(i * 45 + ticks * 0.02)
+                p1 = (int(draw_x + 95 * math.cos(angle)), int(draw_y + 95 * math.sin(angle)))
+                p2 = (int(draw_x + 115 * math.cos(angle)), int(draw_y + 115 * math.sin(angle)))
+                pygame.draw.line(screen, (220, 160, 10) if i % 2 == 0 else (40, 40, 45), p1, p2, width=6)
+                
+            # 3. Outer shield dome (if shielded)
+            if self.shielded:
+                shield_pulse = 100 + int(8 * math.sin(ticks * 0.01))
+                s_surf = pygame.Surface((shield_pulse * 2 + 10, shield_pulse * 2 + 10), pygame.SRCALPHA)
+                pygame.draw.circle(s_surf, (0, 150, 255, 60), (shield_pulse + 5, shield_pulse + 5), shield_pulse)
+                pygame.draw.circle(s_surf, (0, 200, 255, 180), (shield_pulse + 5, shield_pulse + 5), shield_pulse, width=3)
+                screen.blit(s_surf, (int(draw_x - shield_pulse - 5), int(draw_y - shield_pulse - 5)))
+
+            # 4. The central black hole core itself
+            bh_radius = 45 + int(6 * math.sin(ticks * 0.015))
+            pygame.draw.circle(screen, (255, 140, 0), (int(draw_x), int(draw_y)), bh_radius + 12, width=4)
+            pygame.draw.circle(screen, (0, 100, 255), (int(draw_x), int(draw_y)), bh_radius, width=6)
+            pygame.draw.circle(screen, (0, 0, 0), (int(draw_x), int(draw_y)), bh_radius - 4)
+            
+            # Draw active sub-bosses (the stabilizers)
+            for ent in self.sub_bosses:
+                if not ent.is_dead:
+                    ent.draw(screen, camera_y, camera_x)
+            return
+
         for ent in self.sub_bosses:
             if not ent.is_dead:
                 ent.draw(screen, camera_y, camera_x)
@@ -735,13 +1601,16 @@ class Boss:
         screen.blit(name_lbl, (VIRTUAL_WIDTH // 2 - name_lbl.get_width() // 2, bar_y - 24))
 
 class Enemy:
-    def __init__(self, x, y, zone='PLAYING'):
+    def __init__(self, x, y, zone='PLAYING', subtype=None):
         self.zone = zone
         self.x = x
         self.y = y
         self.last_shot = pygame.time.get_ticks() + random.randint(-800, 800)
         self.angle = 90.0 # Straight down default
-        self.subtype = random.choice(['STANDARD', 'HEAVY', 'SCOUT', 'ELITE'])
+        if subtype is not None:
+            self.subtype = subtype
+        else:
+            self.subtype = random.choice(['STANDARD', 'HEAVY', 'SCOUT', 'ELITE'])
         
         # Default sizes
         self.width = 30
@@ -762,22 +1631,22 @@ class Enemy:
             # Cold/Ice Theme
             if self.subtype == 'STANDARD':
                 self.name = "Frost Vanguard"
-                self.speed = random.uniform(1.0, 1.6)
+                self.speed = random.uniform(1.8, 2.6)
                 self.color = CYAN
                 self.health = 2
-                self.shoot_delay = 1800
+                self.shoot_delay = 2200
                 self.credits_value = 25
             elif self.subtype == 'HEAVY':
                 self.name = "Glacial Sentry"
-                self.speed = random.uniform(0.6, 0.9)
+                self.speed = random.uniform(1.0, 1.5)
                 self.color = (0, 100, 255) # Deep Blue
                 self.health = 6  # Tanky!
-                self.shoot_delay = 3000  # Weak gun (slow fire rate)
+                self.shoot_delay = 3500  # Weak gun (slow fire rate)
                 self.width, self.height = 40, 40
                 self.credits_value = 45
             elif self.subtype == 'SCOUT':
                 self.name = "Ice Charger"
-                self.speed = random.uniform(2.5, 3.2)  # Fast rammer
+                self.speed = random.uniform(3.5, 4.5)  # Fast rammer
                 self.color = (180, 220, 255) # Pale Blue
                 self.health = 1
                 self.shoot_delay = 9999999 # never shoots (rams player)
@@ -785,85 +1654,121 @@ class Enemy:
                 self.credits_value = 20
             else: # ELITE (MINIBOSS)
                 self.name = "Snowstorm Skiff"
-                self.speed = random.uniform(1.2, 1.8)
+                self.speed = random.uniform(2.0, 2.8)
                 self.color = (0, 200, 200) # Teal
                 self.health = 5  # Tanky Miniboss
-                self.shoot_delay = 1400  # Strong multi-laser
+                self.shoot_delay = 1800  # Strong multi-laser
                 self.credits_value = 35
                 
         elif zone == 'VULCAN':
             # Fire/Speed Theme
             if self.subtype == 'STANDARD':
                 self.name = "Vulcan Scout"
-                self.speed = random.uniform(2.8, 3.8)
+                self.speed = random.uniform(3.5, 4.5)
                 self.color = ORANGE
                 self.health = 1
-                self.shoot_delay = 1800
+                self.shoot_delay = 2200
                 self.credits_value = 20
             elif self.subtype == 'HEAVY':
                 self.name = "Magma Bomber"
-                self.speed = random.uniform(1.5, 2.0)
+                self.speed = random.uniform(2.0, 2.8)
                 self.color = (180, 0, 0) # Dark Red
                 self.health = 5  # Tanky!
-                self.shoot_delay = 3200  # Slow lava mortar
+                self.shoot_delay = 3800  # Slow lava mortar
                 self.width, self.height = 42, 42
                 self.credits_value = 40
             elif self.subtype == 'SCOUT':
                 self.name = "Solar Skiff"
-                self.speed = random.uniform(4.0, 4.8)
+                self.speed = random.uniform(5.0, 6.0)
                 self.color = YELLOW
                 self.health = 1
-                self.shoot_delay = 2000
+                self.shoot_delay = 2500
                 self.width, self.height = 24, 24
                 self.credits_value = 30
             else: # ELITE (MINIBOSS)
                 self.name = "Pyro Interceptor"
-                self.speed = random.uniform(2.5, 3.2)
+                self.speed = random.uniform(3.2, 4.2)
                 self.color = (255, 60, 60) # Crimson
                 self.health = 4  # Tanky Miniboss
-                self.shoot_delay = 1500  # Homing missile
+                self.shoot_delay = 2000  # Homing missile
                 self.credits_value = 35
                 
-        else: # ASTEROIDS or default PLAYING
-            # Void/Scrap Theme
+        elif zone == 'NEBULA':
             if self.subtype == 'STANDARD':
-                self.name = "Scrap Raider"
-                self.speed = random.uniform(1.5, 2.2)
-                self.color = RED
-                self.health = 1
-                self.shoot_delay = 1800
-                self.credits_value = 15
+                self.name = "Static Raider"; self.speed = 2.8; self.color = PURPLE; self.health = 2; self.shoot_delay = 2000; self.credits_value = 30
             elif self.subtype == 'HEAVY':
-                self.name = "Gravity Anchor"
-                self.speed = random.uniform(0.8, 1.2)
-                self.color = PURPLE
-                self.health = 5  # Tanky!
-                self.shoot_delay = 2000  # Gravity bullet
-                self.width, self.height = 38, 38
-                self.credits_value = 35
+                self.name = "Storm Fortress"; self.speed = 1.4; self.color = (130, 0, 255); self.health = 8; self.shoot_delay = 3500; self.width, self.height = 45, 45; self.credits_value = 60
             elif self.subtype == 'SCOUT':
-                self.name = "Meteor Dart"
-                self.speed = random.uniform(2.8, 3.5)
-                self.color = (200, 100, 255) # Violet
-                self.health = 1
-                self.shoot_delay = 1100
-                self.width, self.height = 24, 24
-                self.credits_value = 25
-            else: # ELITE (MINIBOSS)
-                self.name = "Cosmic Corsair"
-                self.speed = random.uniform(1.6, 2.4)
-                self.color = (255, 0, 255) # Magenta
-                self.health = 4  # Tanky Miniboss
-                self.shoot_delay = 1500  # Double parallel lasers
-                self.credits_value = 30
+                self.name = "Lightning Wraith"; self.speed = 4.2; self.color = (255, 100, 255); self.health = 1; self.shoot_delay = 1500; self.width, self.height = 24, 24; self.credits_value = 40
+            else:
+                self.name = "Nebula Archon"; self.speed = 2.8; self.color = WHITE; self.health = 12; self.shoot_delay = 1800; self.credits_value = 120
+        elif zone == 'PLASMA':
+            if self.subtype == 'STANDARD':
+                self.name = "Flare Grunt"; self.speed = 3.2; self.color = GOLD; self.health = 2; self.shoot_delay = 1800; self.credits_value = 35
+            elif self.subtype == 'HEAVY':
+                self.name = "Solar Juggernaut"; self.speed = 1.6; self.color = (255, 200, 0); self.health = 10; self.shoot_delay = 4000; self.width, self.height = 48, 48; self.credits_value = 75
+            elif self.subtype == 'SCOUT':
+                self.name = "Plasma Leaper"; self.speed = 5.5; self.color = (255, 255, 150); self.health = 1; self.shoot_delay = 2000; self.width, self.height = 26, 26; self.credits_value = 45
+            else:
+                self.name = "Sun Emperor"; self.speed = 3.0; self.color = WHITE; self.health = 15; self.shoot_delay = 1600; self.credits_value = 150
+        elif zone == 'VOID':
+            if self.subtype == 'STANDARD':
+                self.name = "Void Drifter"; self.speed = 2.5; self.color = INDIGO; self.health = 3; self.shoot_delay = 2500; self.credits_value = 40
+            elif self.subtype == 'HEAVY':
+                self.name = "Abyss Sentinel"; self.speed = 1.2; self.color = (40, 0, 100); self.health = 12; self.shoot_delay = 3000; self.width, self.height = 50, 50; self.credits_value = 80
+            elif self.subtype == 'SCOUT':
+                self.name = "Shadow Reaper"; self.speed = 4.8; self.color = (100, 80, 255); self.health = 2; self.shoot_delay = 1400; self.width, self.height = 22, 22; self.credits_value = 50
+            else:
+                self.name = "Void Singularity"; self.speed = 2.4; self.color = BLACK; self.health = 18; self.shoot_delay = 2000; self.credits_value = 180
+        elif zone == 'QUANTUM':
+            if self.subtype == 'STANDARD':
+                self.name = "Phase Grunt"; self.speed = 3.5; self.color = GREEN; self.health = 2; self.shoot_delay = 1800; self.credits_value = 45
+            elif self.subtype == 'HEAVY':
+                self.name = "Matrix Wall"; self.speed = 1.8; self.color = (0, 200, 100); self.health = 14; self.shoot_delay = 3200; self.width, self.height = 46, 46; self.credits_value = 90
+            elif self.subtype == 'SCOUT':
+                self.name = "Shift Blink"; self.speed = 6.0; self.color = (150, 255, 150); self.health = 1; self.shoot_delay = 1200; self.width, self.height = 20, 20; self.credits_value = 55
+            else:
+                self.name = "Quantum Ghost"; self.speed = 3.5; self.color = WHITE; self.health = 20; self.shoot_delay = 1500; self.credits_value = 200
+        elif zone == 'SINGULARITY':
+            if self.subtype == 'STANDARD':
+                self.name = "Event Raider"; self.speed = 3.0; self.color = BLUE; self.health = 4; self.shoot_delay = 2000; self.credits_value = 50
+            elif self.subtype == 'HEAVY':
+                self.name = "Horizon Guard"; self.speed = 1.5; self.color = (0, 50, 200); self.health = 18; self.shoot_delay = 3500; self.width, self.height = 52, 52; self.credits_value = 110
+            elif self.subtype == 'SCOUT':
+                self.name = "Grav-Dart"; self.speed = 5.2; self.color = (100, 150, 255); self.health = 2; self.shoot_delay = 1600; self.width, self.height = 24, 24; self.credits_value = 65
+            else:
+                self.name = "Eternal Warden"; self.speed = 3.2; self.color = WHITE; self.health = 25; self.shoot_delay = 1400; self.credits_value = 250
+        elif zone == 'ORION':
+            if self.subtype == 'STANDARD':
+                self.name = "Citadel Knight"; self.speed = 3.5; self.color = MAGENTA; self.health = 5; self.shoot_delay = 1500; self.credits_value = 60
+            elif self.subtype == 'HEAVY':
+                self.name = "Dreadnought Core"; self.speed = 2.0; self.color = (150, 0, 150); self.health = 25; self.shoot_delay = 3000; self.width, self.height = 60, 60; self.credits_value = 150
+            elif self.subtype == 'SCOUT':
+                self.name = "Orion Assassin"; self.speed = 6.5; self.color = (255, 150, 255); self.health = 3; self.shoot_delay = 1000; self.width, self.height = 28, 28; self.credits_value = 80
+            else:
+                self.name = "Imperial Overlord"; self.speed = 4.0; self.color = WHITE; self.health = 40; self.shoot_delay = 1200; self.credits_value = 500
+        else: # ASTEROIDS or default
+            if self.subtype == 'STANDARD':
+                self.name = "Scrap Raider"; self.speed = random.uniform(2.2, 3.0); self.color = RED; self.health = 1; self.shoot_delay = 2200; self.credits_value = 15
+            elif self.subtype == 'HEAVY':
+                self.name = "Gravity Anchor"; self.speed = random.uniform(1.2, 1.8); self.color = PURPLE; self.health = 5; self.shoot_delay = 2500; self.width, self.height = 38, 38; self.credits_value = 35
+            elif self.subtype == 'SCOUT':
+                self.name = "Meteor Dart"; self.speed = random.uniform(3.8, 4.8); self.color = (200, 100, 255); self.health = 1; self.shoot_delay = 1600; self.width, self.height = 24, 24; self.credits_value = 25
+            else:
+                self.name = "Cosmic Corsair"; self.speed = random.uniform(2.4, 3.2); self.color = (255, 0, 255); self.health = 4; self.shoot_delay = 2000; self.credits_value = 30
         # Scale difficulty based on zone index
         zone_keys = ['ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'VOID', 'QUANTUM', 'SINGULARITY', 'ORION']
         diff_idx = zone_keys.index(zone) if zone in zone_keys else 0
         if diff_idx > 0:
-            self.health = max(1, self.health + diff_idx // 3)
+            self.health = max(1, self.health + diff_idx // 4)
             if self.shoot_delay < 5000000:
-                self.shoot_delay = max(600, self.shoot_delay - diff_idx * 80)
-            self.speed = self.speed * (1.0 + diff_idx * 0.05)
+                self.shoot_delay = max(700, self.shoot_delay - diff_idx * 55)
+            self.speed = self.speed * (1.0 + diff_idx * 0.025)
+        else:
+            self.health = max(1, self.health + 1)
+            if self.shoot_delay < 5000000:
+                self.shoot_delay = max(700, self.shoot_delay - 70)
+            self.speed = self.speed * 1.12
             
         self.max_health = self.health
         if zone in BIOME_CONFIGS and zone not in ('AQUARIS', 'VULCAN', 'ASTEROIDS'):
@@ -874,37 +1779,75 @@ class Enemy:
         self.acceleration = 0.1
         self.drag = 0.98
  
-    def update(self, current_time, player, projectiles_list, player_bullets=None):
-        # 1. Meteor Dart Camouflage Gimmick
-        if self.zone == 'ASTEROIDS' and self.subtype == 'SCOUT' and self.is_dormant:
-            player_center = pygame.math.Vector2(player.rect.center)
-            enemy_center = pygame.math.Vector2(self.rect.center)
-            if player_center.distance_to(enemy_center) < 250:
-                self.is_dormant = False
-                self.last_shot = current_time + 400
-            else:
-                self.y += 0.5
-                self.rect.y = int(self.y)
-                return
+    def update(self, current_time, player, projectiles_list, player_bullets=None, torpedoes=None, obstacles=None):
+        if getattr(player, 'is_cloaked', False):
+            # Drift aimlessly if player is cloaked
+            self.velocity *= self.drag
+            self.x += self.velocity.x
+            self.y += self.velocity.y
+            self.rect.topleft = (int(self.x), int(self.y))
+            return # Don't target or shoot
 
         player_center = pygame.math.Vector2(player.rect.center)
         enemy_center = pygame.math.Vector2(self.rect.center)
         to_player = player_center - enemy_center
 
-        # Evasion mechanic: dodge player bullets if close
-        if player_bullets and current_time - self.last_evade > self.evade_cooldown:
+        # 1. Ambush / Gimmick Logic
+        if self.subtype == 'SCOUT':
+            if self.zone == 'ASTEROIDS' and getattr(self, 'is_dormant', False):
+                if player_center.distance_to(enemy_center) < 250:
+                    self.is_dormant = False
+                    self.last_shot = current_time + 400
+                else:
+                    self.y += 0.5
+                    self.rect.y = int(self.y)
+                    return
+            elif self.zone == 'VOID':
+                self.is_invisible = to_player.length() > 300
+            elif self.zone == 'NEBULA':
+                if (current_time // 2000) % 3 == 0:
+                    self.velocity += to_player.normalize() * 0.8
+            elif self.zone == 'QUANTUM':
+                # Shift Blink Teleport gimmick
+                if player_bullets:
+                    for b in player_bullets:
+                        if pygame.math.Vector2(self.rect.center).distance_to(pygame.math.Vector2(b.x, b.y)) < 80:
+                            if random.random() < 0.05: # Rare blink
+                                self.x += random.choice([-150, 150])
+                                self.y += random.choice([-100, 100])
+                                self.rect.topleft = (self.x, self.y)
+
+        # 2. Biome Phasing Gimmicks
+        if self.zone == 'QUANTUM' and self.subtype == 'HEAVY':
+            # Matrix Wall phases in and out of existence
+            self.is_phased = (current_time // 1500) % 2 == 0
+        
+        if self.zone == 'VOID' and self.subtype == 'HEAVY':
+            # Abyss Sentinel Gravity Pull
+            dist = to_player.length()
+            if dist < 300:
+                pull = to_player.normalize() * (0.8 * (1.0 - dist/300))
+                player.velocity -= pull
+
+        player_center = pygame.math.Vector2(player.rect.center)
+        enemy_center = pygame.math.Vector2(self.rect.center)
+        to_player = player_center - enemy_center
+
+        avoid_force = pygame.math.Vector2(0, 0)
+        
+        # Smooth Evasion Mechanic: Swerve around projectiles
+        if player_bullets:
             for bullet in player_bullets:
                 bullet_pos = pygame.math.Vector2(bullet.x, bullet.y)
-                dist_vec = bullet_pos - enemy_center
-                if dist_vec.length() < 130 and bullet_pos.y > self.y:
-                    if random.random() < self.evade_chance:
-                        # Dodge sideways
-                        dodge_dir = -1.0 if dist_vec.x > 0 else 1.0
-                        dodge_impulse = dodge_dir * 8.5
-                        self.velocity.x += dodge_impulse
-                        self.velocity.y -= 1.5
-                        self.last_evade = current_time
-                        break
+                dist_vec = enemy_center - bullet_pos
+                dist = dist_vec.length()
+                if 0 < dist < 75 and bullet.dy < 0: # Bullet is moving towards the enemy
+                    bullet_dir = pygame.math.Vector2(bullet.dx, bullet.dy)
+                    if bullet_dir.length() > 0:
+                        perp_dir = pygame.math.Vector2(-bullet_dir.y, bullet_dir.x).normalize()
+                        if dist_vec.dot(perp_dir) < 0:
+                            perp_dir = -perp_dir
+                        avoid_force += perp_dir * (75 - dist) * 0.04
         
         # 2. Solar Skiff Dash Gimmick
         if self.zone == 'VULCAN' and self.subtype == 'SCOUT':
@@ -915,6 +1858,17 @@ class Enemy:
         # 3. Frost Vanguard Deflect Shield Gimmick
         if self.zone == 'AQUARIS' and self.subtype == 'STANDARD':
             self.shield_active = (current_time // 1200) % 2 == 0
+
+        # Improved AI: Smooth Obstacle and Torpedo Avoidance
+        threats = []
+        if obstacles: threats.extend(obstacles)
+        if torpedoes: threats.extend([t for t in torpedoes if not t.exploded])
+        for threat in threats:
+            dist_vec = enemy_center - pygame.math.Vector2(threat.rect.center)
+            dist = dist_vec.length()
+            if 0 < dist < 180:
+                avoid_force += dist_vec.normalize() * (180 - dist) * 0.04
+        self.velocity += avoid_force
 
         if to_player.length() > 5:
             self.angle = math.degrees(math.atan2(to_player.y, to_player.x))
@@ -938,44 +1892,86 @@ class Enemy:
                 rad = math.radians(self.angle)
                 bullet_dx = math.cos(rad)
                 bullet_dy = math.sin(rad)
+                spawn_offset = self.width // 2 + 10
+                spawn_x, spawn_y = enemy_center.x + bullet_dx * spawn_offset, enemy_center.y + bullet_dy * spawn_offset
                 
+                # Biome-specific behavior overrides
+                if self.zone == 'PLASMA' and self.subtype == 'STANDARD':
+                    # Flare Grunt Burst Fire
+                    for i in range(3):
+                        projectiles_list.append(EnemyBullet(spawn_x, spawn_y, bullet_dx, bullet_dy, color=self.color, speed=8 + i*2, telegraph_frames=i*5))
+                    return
+
+                if self.zone == 'NEBULA' and self.subtype == 'STANDARD':
+                    # Static Raider Spread
+                    for ang in [-15, 0, 15]:
+                        dir_vec = pygame.math.Vector2(bullet_dx, bullet_dy).rotate(ang)
+                        projectiles_list.append(EnemyBullet(spawn_x, spawn_y, dir_vec.x, dir_vec.y, color=PURPLE, speed=7))
+                    return
+
+                if self.zone == 'SINGULARITY' and self.subtype == 'HEAVY':
+                    # Horizon Guard Heavy Gravity Shot
+                    projectiles_list.append(EnemyBullet(spawn_x, spawn_y, bullet_dx, bullet_dy, color=BLUE, speed=5, size=12, is_gravity=True, target_player=player))
+                    return
+
+                if self.zone == 'SINGULARITY' and self.subtype == 'SCOUT':
+                    # Grav-Dart High Velocity
+                    projectiles_list.append(EnemyBullet(spawn_x, spawn_y, bullet_dx, bullet_dy, color=CYAN, speed=16, size=5))
+                    return
+
+                if self.zone == 'ORION' and self.subtype == 'ELITE':
+                    # Imperial Overlord Barrage
+                    for ang in range(-30, 31, 10):
+                        dir_vec = pygame.math.Vector2(bullet_dx, bullet_dy).rotate(ang)
+                        projectiles_list.append(EnemyBullet(spawn_x, spawn_y, dir_vec.x, dir_vec.y, color=WHITE, speed=9, is_homing=(abs(ang) < 5), target_player=player, shooter=self))
+                    return
+
                 # Custom shooting patterns for gimmicks
                 if self.zone == 'AQUARIS':
                     if self.subtype == 'HEAVY':
                         # Glacial Sentry: Weak slow tiny bullet
                         projectiles_list.append(EnemyBullet(enemy_center.x, enemy_center.y, bullet_dx, bullet_dy, color=(150, 200, 255), speed=2.5, size=4))
+                        projectiles_list.append(EnemyBullet(spawn_x, spawn_y, bullet_dx, bullet_dy, color=(150, 200, 255), speed=4.0, size=4))
                     elif self.subtype == 'ELITE':
                         # Snowstorm Skiff Miniboss: 3 spreading lasers
                         for offset in [-15, 0, 15]:
                             r = math.radians(self.angle + offset)
                             projectiles_list.append(EnemyBullet(enemy_center.x, enemy_center.y, math.cos(r), math.sin(r), color=self.color, speed=5, size=8))
+                            projectiles_list.append(EnemyBullet(spawn_x, spawn_y, math.cos(r), math.sin(r), color=self.color, speed=9.0, size=8))
                     elif self.subtype == 'SCOUT':
                         pass
                     else:
                         projectiles_list.append(EnemyBullet(enemy_center.x, enemy_center.y, bullet_dx, bullet_dy, color=self.color, speed=5, size=7))
+                        projectiles_list.append(EnemyBullet(spawn_x, spawn_y, bullet_dx, bullet_dy, color=self.color, speed=9.5, size=7))
                         
                 elif self.zone == 'VULCAN':
                     if self.subtype == 'HEAVY':
                         # Magma Bomber: Large slow lava mortar
                         projectiles_list.append(EnemyBullet(enemy_center.x, enemy_center.y, bullet_dx, bullet_dy, color=ORANGE, speed=2.5, size=15))
+                        projectiles_list.append(EnemyBullet(spawn_x, spawn_y, bullet_dx, bullet_dy, color=ORANGE, speed=4.5, size=15))
                     elif self.subtype == 'ELITE':
-                        # Pyro Interceptor Miniboss: Homing missile
-                        projectiles_list.append(EnemyBullet(enemy_center.x, enemy_center.y, bullet_dx, bullet_dy, color=RED, speed=4, size=9, is_homing=True, target_player=player))
+                        # Pyro Interceptor Miniboss: Homing missile (Only 1 tracking projectile at a time)
+                        projectiles_list.append(EnemyBullet(spawn_x, spawn_y, bullet_dx, bullet_dy, color=RED, speed=8.0, size=9, is_homing=True, target_player=player, life_time=180, shooter=self))
                     else:
                         projectiles_list.append(EnemyBullet(enemy_center.x, enemy_center.y, bullet_dx, bullet_dy, color=self.color, speed=6, size=7))
+                        projectiles_list.append(EnemyBullet(spawn_x, spawn_y, bullet_dx, bullet_dy, color=self.color, speed=14.0, size=7))
                         
                 else: # ASTEROIDS or default
                     if self.subtype == 'HEAVY':
                         # Gravity Anchor: Gravity pull bullet
                         projectiles_list.append(EnemyBullet(enemy_center.x, enemy_center.y, bullet_dx, bullet_dy, color=PURPLE, speed=4.5, size=10, is_gravity=True, target_player=player))
+                        projectiles_list.append(EnemyBullet(spawn_x, spawn_y, bullet_dx, bullet_dy, color=PURPLE, speed=10.5, size=10, is_gravity=True, target_player=player))
                     elif self.subtype == 'ELITE':
                         # Cosmic Corsair Miniboss: Double laser barrage
                         perp_dx = -bullet_dy
                         perp_dy = bullet_dx
                         projectiles_list.append(EnemyBullet(enemy_center.x - perp_dx * 8, enemy_center.y - perp_dy * 8, bullet_dx, bullet_dy, color=self.color, speed=6, size=7))
                         projectiles_list.append(EnemyBullet(enemy_center.x + perp_dx * 8, enemy_center.y + perp_dy * 8, bullet_dx, bullet_dy, color=self.color, speed=6, size=7))
+                        projectiles_list.append(EnemyBullet(spawn_x - perp_dx * 8, spawn_y - perp_dy * 8, bullet_dx, bullet_dy, color=self.color, speed=11.5, size=7))
+                        projectiles_list.append(EnemyBullet(spawn_x + perp_dx * 8, spawn_y + perp_dy * 8, bullet_dx, bullet_dy, color=self.color, speed=11.5, size=7))
                     else:
                         projectiles_list.append(EnemyBullet(enemy_center.x, enemy_center.y, bullet_dx, bullet_dy, color=self.color, speed=5, size=7))
+                        projectiles_list.append(EnemyBullet(spawn_x, spawn_y, bullet_dx, bullet_dy, color=self.color, speed=11.0, size=7))
 
     def on_death(self, projectiles_list, player):
         if self.zone == 'ASTEROIDS' and self.subtype == 'STANDARD':
@@ -985,11 +1981,16 @@ class Enemy:
 
     def draw(self, screen, camera_y, camera_x=0):
         draw_x = self.x - camera_x
-        # Camouflage rendering for Meteor Dart scout
+        # Stealth / Ambush visuals
+        if getattr(self, 'is_invisible', False):
+            return
+        
+        # Quantum Phasing Visuals
+        if getattr(self, 'is_phased', False) and pygame.time.get_ticks() % 200 < 100:
+            return
         if self.zone == 'ASTEROIDS' and self.subtype == 'SCOUT' and self.is_dormant:
             draw_y = self.y - camera_y
-            pygame.draw.circle(screen, (100, 100, 100), (int(draw_x + self.width // 2), int(draw_y + self.height // 2)), 12)
-            pygame.draw.circle(screen, (80, 80, 80), (int(draw_x + self.width // 2), int(draw_y + self.height // 2)), 12, width=2)
+            pygame.draw.circle(screen, (80, 80, 80), (int(draw_x + self.width // 2), int(draw_y + self.height // 2)), 12, width=1)
             return
 
         draw_y = self.y - camera_y
@@ -1005,26 +2006,40 @@ class Enemy:
         # 1. Back engine flame
         flame_len = 8 + random.randint(0, 6)
         rear_center = center - dir_f * (self.height // 2)
-        pygame.draw.polygon(screen, RED, [rear_center, rear_center - dir_r * 6, rear_center - dir_f * flame_len, rear_center + dir_r * 6])
+        pygame.draw.polygon(screen, RED, [rear_center, rear_center - dir_r * 6, rear_center - dir_f * flame_len, rear_center + dir_r * 6], width=1)
         
-        # 2. Swept wings/mandibles pointing forward
-        lw_tip = center + dir_f * (self.height // 2) - dir_r * (self.width // 2)
-        lw_base = center - dir_f * (self.height // 4) - dir_r * 6
-        pygame.draw.polygon(screen, SLATE_GRAY, [center, lw_tip, lw_base])
+        # 2. WINGS
+        lw_tip = center - dir_f * 5 - dir_r * (self.width // 2)
+        lw_base_in = center - dir_f * (self.height // 2) - dir_r * 5
+        lw_base_out = center - dir_f * (self.height // 3) - dir_r * (self.width // 2)
+        pygame.draw.polygon(screen, SLATE_GRAY, [center, lw_tip, lw_base_out, lw_base_in])
         
-        rw_tip = center + dir_f * (self.height // 2) + dir_r * (self.width // 2)
-        rw_base = center - dir_f * (self.height // 4) + dir_r * 6
-        pygame.draw.polygon(screen, SLATE_GRAY, [center, rw_tip, rw_base])
+        rw_tip = center - dir_f * 5 + dir_r * (self.width // 2)
+        rw_base_in = center - dir_f * (self.height // 2) + dir_r * 5
+        rw_base_out = center - dir_f * (self.height // 3) + dir_r * (self.width // 2)
+        pygame.draw.polygon(screen, SLATE_GRAY, [center, rw_tip, rw_base_out, rw_base_in])
+
+        # 3. MAIN HULL (Triangle shape)
+        hull_tip = center + dir_f * (self.height // 2)
+        hull_left = center - dir_f * (self.height // 4) - dir_r * (self.width // 5)
+        hull_right = center - dir_f * (self.height // 4) + dir_r * (self.width // 5)
+        pygame.draw.polygon(screen, self.color, [hull_tip, hull_left, hull_right])
+
+        # 4. COCKPIT GLASS
+        glass_tip = center + dir_f * (self.height // 3)
+        glass_left = center + dir_f * (self.height // 8) - dir_r * (self.width // 10)
+        glass_right = center + dir_f * (self.height // 8) + dir_r * (self.width // 10)
+        pygame.draw.polygon(screen, WHITE, [glass_tip, glass_left, glass_right])
         
-        # 3. Main Hull Core
-        hull_tip = center + dir_f * (self.height // 3)
-        hull_l = center - dir_f * (self.height // 2) - dir_r * 6
-        hull_r = center - dir_f * (self.height // 2) + dir_r * 6
-        pygame.draw.polygon(screen, self.color, [hull_tip, hull_l, hull_r])
-        
-        # 4. Glowing eye/engine core
-        eye_color = YELLOW if self.zone == 'VULCAN' else (WHITE if self.zone == 'AQUARIS' else ORANGE)
-        pygame.draw.circle(screen, eye_color, (int(center.x), int(center.y)), 4)
+        # Muzzle Flash when shooting
+        ticks = pygame.time.get_ticks()
+        if ticks - self.last_shot < 120:
+            tip_x = center.x + dir_f.x * (self.height // 2 + 10)
+            tip_y = center.y + dir_f.y * (self.height // 2 + 10)
+            pygame.draw.circle(screen, self.color, (int(tip_x), int(tip_y)), 16, width=2)
+            pygame.draw.circle(screen, WHITE, (int(tip_x), int(tip_y)), 8)
+            pygame.draw.line(screen, WHITE, (int(tip_x - 12), int(tip_y)), (int(tip_x + 12), int(tip_y)), 2)
+            pygame.draw.line(screen, WHITE, (int(tip_x), int(tip_y - 12)), (int(tip_x), int(tip_y + 12)), 2)
         
         # Vulcan Scout Trail Gimmick (Fire Trail)
         if self.zone == 'VULCAN' and self.subtype == 'STANDARD':
@@ -1095,7 +2110,65 @@ class Meteor:
         draw_y = self.y - camera_y
         draw_points = [(p[0] + draw_x, p[1] + draw_y) for p in self.points]
         color = SLATE_GRAY if self.is_static else GRAY
-        pygame.draw.polygon(screen, color, draw_points)
+        
+        # 1. Fill the main asteroid body with brighter rocky tones
+        body_color = (80, 80, 85) if self.is_static else (110, 110, 115)
+        pygame.draw.polygon(screen, body_color, draw_points)
+        
+        # Outer highlighted rim border to stand out against background space
+        border_color = (150, 150, 160) if self.is_static else (200, 200, 210)
+        pygame.draw.polygon(screen, border_color, draw_points, width=2)
+        
+        # 2. Draw crater textures
+        if not hasattr(self, 'craters'):
+            random.seed(int(self.x * 1000 + self.y))
+            self.craters = []
+            for _ in range(3):
+                cx = random.uniform(self.size * 0.3, self.size * 0.7)
+                cy = random.uniform(self.size * 0.3, self.size * 0.7)
+                cr = random.uniform(self.size * 0.1, self.size * 0.2)
+                self.craters.append((cx, cy, cr))
+            random.seed()
+            
+        for cx, cy, cr in self.craters:
+            spot_color = (55, 55, 60) if self.is_static else (85, 85, 90)
+            pygame.draw.circle(screen, spot_color, (int(draw_x + cx), int(draw_y + cy)), int(cr))
+            rim_color = (105, 105, 115) if self.is_static else (145, 145, 155)
+            pygame.draw.circle(screen, rim_color, (int(draw_x + cx), int(draw_y + cy)), int(cr), width=1)
+            
+class FactoryStructure:
+    def __init__(self, x, y, width=120, height=120):
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+        self.size = width # Alias for size compatibility
+        self.rect = pygame.Rect(self.x, self.y, self.width, self.height)
+        self.is_static = True
+        self.credits_value = 15
+        self.health = 5.0 # Takes a few standard shots to destroy!
+        self.color = (60, 60, 65)
+
+    def update(self):
+        self.rect.x = int(self.x)
+        self.rect.y = int(self.y)
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        
+        # Outer wireframe box
+        pygame.draw.rect(screen, BLUE, (draw_x, draw_y, self.width, self.height), width=1)
+        # Inner wireframe box
+        pygame.draw.rect(screen, (0, 100, 200), (draw_x + 10, draw_y + 10, self.width - 20, self.height - 20), width=1)
+        # Cross lines for structural truss
+        pygame.draw.line(screen, (0, 60, 120), (draw_x, draw_y), (draw_x + self.width, draw_y + self.height), 1)
+        pygame.draw.line(screen, (0, 60, 120), (draw_x + self.width, draw_y), (draw_x, draw_y + self.height), 1)
+        
+        # Pulsing center core node
+        pulse = 128 + int(127 * math.sin(pygame.time.get_ticks() * 0.006))
+        core_color = (0, pulse // 2, pulse)
+        pygame.draw.circle(screen, core_color, (int(draw_x + self.width // 2), int(draw_y + self.height // 2)), 6)
 
 class Material:
     def __init__(self, x, y):
@@ -1131,6 +2204,194 @@ class Scrap:
         pygame.draw.circle(screen, GOLD, (int(draw_x), int(draw_y)), self.radius - 3)
         pygame.draw.circle(screen, WHITE, (int(draw_x), int(draw_y)), 3)
 
+class GasCloud:
+    def __init__(self, x, y, color):
+        self.x = x
+        self.y = y
+        self.radius = random.randint(250, 600)
+        self.color = color
+        
+        # Generate value noise in a low-resolution grid
+        # Octave 1: 10x10 grid (large structural features)
+        # Octave 2: 20x20 grid (fine cloud details)
+        grid_size = 20
+        surf_low = pygame.Surface((grid_size, grid_size), pygame.SRCALPHA)
+        center = (grid_size - 1) / 2.0
+        max_dist = (grid_size - 1) / 2.0
+        
+        # Subtle translucent base alpha but clearly visible
+        max_alpha = random.randint(50, 90)
+        
+        # Pre-generate noise tables
+        noise_grid_1 = [[random.uniform(0.4, 1.0) for _ in range(grid_size // 2)] for _ in range(grid_size // 2)]
+        noise_grid_2 = [[random.uniform(0.3, 1.0) for _ in range(grid_size)] for _ in range(grid_size)]
+        
+        for gx in range(grid_size):
+            for gy in range(grid_size):
+                dx = gx - center
+                dy = gy - center
+                dist = math.hypot(dx, dy)
+                
+                if dist >= max_dist:
+                    falloff = 0.0
+                else:
+                    falloff = 1.0 - (dist / max_dist)
+                    # Smooth step falloff for soft edges
+                    falloff = falloff * falloff * (3.0 - 2.0 * falloff)
+                
+                # Fetch low and high frequency noise values
+                n1 = noise_grid_1[min(gx // 2, len(noise_grid_1) - 1)][min(gy // 2, len(noise_grid_1[0]) - 1)]
+                n2 = noise_grid_2[gx][gy]
+                
+                # Blend octaves (60% low frequency, 40% high frequency)
+                combined_noise = n1 * 0.6 + n2 * 0.4
+                
+                alpha = int(max_alpha * falloff * combined_noise)
+                surf_low.set_at((gx, gy), (*self.color, alpha))
+                
+        # Bilinearly upscale the low-res noise surface to the final cloud size
+        self.surf = pygame.transform.smoothscale(surf_low, (self.radius * 2, self.radius * 2))
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        if -self.radius < draw_x < VIRTUAL_WIDTH + self.radius and -self.radius < draw_y < VIRTUAL_HEIGHT + self.radius:
+            screen.blit(self.surf, (int(draw_x - self.radius), int(draw_y - self.radius)))
+
+class AmbientDebris:
+    def __init__(self, x, y, dx=None, dy=None):
+        self.x = x
+        self.y = y
+        self.dx = dx if dx is not None else random.uniform(-0.5, 0.5)
+        self.dy = dy if dy is not None else random.uniform(-0.5, 0.5)
+        self.size = random.randint(1, 3)
+        self.color = random.choice([(150, 150, 150), (100, 100, 100), (80, 80, 80)])
+
+    def update(self):
+        self.x += self.dx
+        self.y += self.dy
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        pygame.draw.rect(screen, self.color, (int(draw_x), int(draw_y), self.size, self.size))
+
+class DerelictHull:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.width = random.randint(60, 100)
+        self.height = random.randint(40, 70)
+        self.health = 5
+        self.rect = pygame.Rect(self.x - self.width//2, self.y - self.height//2, self.width, self.height)
+        self.angle = random.uniform(0, 360)
+
+    def update(self):
+        self.rect.center = (int(self.x), int(self.y))
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        surf = pygame.Surface((self.width, self.height), pygame.SRCALPHA)
+        pygame.draw.rect(surf, (70, 50, 40), (0, 0, self.width, self.height), border_radius=6)
+        pygame.draw.line(surf, (40, 20, 10), (0, self.height//2), (self.width, self.height//2), 3)
+        pygame.draw.circle(surf, (30, 15, 10), (self.width//2, self.height//2), 10)
+        
+        rot_surf = pygame.transform.rotate(surf, self.angle)
+        screen.blit(rot_surf, (int(draw_x - rot_surf.get_width()//2), int(draw_y - rot_surf.get_height()//2)))
+
+class Anomaly:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.radius = 25
+        self.rect = pygame.Rect(self.x - self.radius, self.y - self.radius, self.radius * 2, self.radius * 2)
+
+    def update(self):
+        self.rect.center = (int(self.x), int(self.y))
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        ticks = pygame.time.get_ticks()
+        pulse = int(6 * math.sin(ticks * 0.01))
+        pygame.draw.circle(screen, MAGENTA, (int(draw_x), int(draw_y)), self.radius + pulse, width=3)
+        pygame.draw.circle(screen, (200, 50, 255), (int(draw_x), int(draw_y)), max(1, self.radius - 10 + pulse))
+        pygame.draw.circle(screen, WHITE, (int(draw_x), int(draw_y)), max(1, self.radius - 18))
+
+class BackgroundStructure:
+    def __init__(self, zone):
+        self.zone = zone
+        self.x = VIRTUAL_WIDTH // 2
+        self.y = -3500  # Deep into the level
+        self.color = BIOME_CONFIGS.get(zone, {}).get('theme_color', GRAY)
+        
+    def draw(self, screen, camera_y, camera_x):
+        draw_x = self.x - camera_x * 0.05
+        draw_y = self.y - camera_y * 0.05
+        ticks = pygame.time.get_ticks()
+        
+        surf = pygame.Surface((1200, 1200), pygame.SRCALPHA)
+        cx, cy = 600, 600
+        
+        if self.zone == 'SINGULARITY':
+            # Wireframe fusion core
+            pygame.draw.circle(surf, self.color, (cx, cy), 150, width=1)
+            pygame.draw.circle(surf, self.color, (cx, cy), 155, width=2)
+            for i in range(3):
+                ang = ticks * 0.001 + i
+                pygame.draw.ellipse(surf, self.color, (cx - 300, cy - 50, 600, 100), width=1)
+            pygame.draw.rect(surf, self.color, (cx - 400, cy - 20, 200, 40), width=1)
+            pygame.draw.rect(surf, self.color, (cx + 200, cy - 20, 200, 40), width=1)
+        elif self.zone == 'ORION':
+            # Wireframe Orion Citadel
+            pygame.draw.polygon(surf, self.color, [(cx, cy-400), (cx-200, cy+200), (cx+200, cy+200)], width=1)
+            pygame.draw.polygon(surf, self.color, [(cx, cy-300), (cx-100, cy+200), (cx+100, cy+200)], width=1)
+            pygame.draw.line(surf, self.color, (cx, cy-400), (cx, cy+200), 1)
+        elif self.zone == 'ASTEROIDS':
+            # Wireframe Space Elevator
+            pygame.draw.rect(surf, self.color, (cx - 80, cy - 600, 160, 1200), width=1)
+            pygame.draw.rect(surf, self.color, (cx - 30, cy - 600, 60, 1200), width=1)
+            for dy in range(-600, 600, 120):
+                pygame.draw.line(surf, self.color, (cx - 80, cy + dy), (cx + 80, cy + dy + 120), 1)
+                pygame.draw.line(surf, self.color, (cx + 80, cy + dy), (cx - 80, cy + dy + 120), 1)
+            pygame.draw.circle(surf, (255, 100, 0), (cx, cy+100), 80, width=2)
+            pygame.draw.circle(surf, WHITE, (cx, cy+100), 10)
+        elif self.zone == 'VOID':
+            pygame.draw.ellipse(surf, self.color, (cx - 300, cy - 150, 600, 300), width=2)
+            pygame.draw.circle(surf, self.color, (cx, cy), 130, width=1)
+            pygame.draw.line(surf, self.color, (cx, cy-120), (cx, cy+120), 1)
+        elif self.zone == 'QUANTUM':
+            for r in [100, 200, 350]:
+                ang = ticks * 0.0005 * (1 if r == 200 else -1)
+                pts = [(cx + r*math.cos(ang + i*math.pi/2), cy + r*math.sin(ang + i*math.pi/2)) for i in range(4)]
+                pygame.draw.polygon(surf, self.color, pts, width=1)
+                pygame.draw.circle(surf, self.color, (cx, cy), r, width=1)
+        elif self.zone == 'PLASMA':
+            pygame.draw.circle(surf, self.color, (cx, cy), 200, width=2)
+            pygame.draw.circle(surf, self.color, (cx, cy), 100, width=1)
+            pygame.draw.rect(surf, self.color, (cx - 300, cy - 10, 600, 20), width=1)
+            pygame.draw.rect(surf, self.color, (cx - 10, cy - 300, 20, 600), width=1)
+        elif self.zone == 'NEBULA':
+            pygame.draw.polygon(surf, self.color, [(cx-150, cy-200), (cx+150, cy-200), (cx, cy+200)], width=1)
+            if ticks % 800 < 150:
+                pygame.draw.line(surf, WHITE, (cx, cy+200), (cx + random.randint(-150, 150), cy + 500), 2)
+        elif self.zone == 'AQUARIS':
+            # Wireframe Ice Spires
+            pygame.draw.polygon(surf, self.color, [(cx, cy-500), (cx-150, cy+300), (cx+150, cy+300)], width=1)
+            pygame.draw.polygon(surf, self.color, [(cx, cy-400), (cx-100, cy+300), (cx+100, cy+300)], width=1)
+            pygame.draw.line(surf, self.color, (cx, cy-500), (cx, cy+300), 1)
+            pygame.draw.line(surf, self.color, (cx-150, cy+300), (cx+150, cy+300), 1)
+        elif self.zone == 'VULCAN':
+            # Solar forge wireframe
+            pygame.draw.circle(surf, self.color, (cx, cy), 350, width=1)
+            pygame.draw.circle(surf, self.color, (cx, cy), 200, width=1)
+            for angle in range(0, 360, 30):
+                rad = math.radians(angle + ticks * 0.005)
+                pygame.draw.line(surf, self.color, (cx + 200 * math.cos(rad), cy + 200 * math.sin(rad)), (cx + 350 * math.cos(rad), cy + 350 * math.sin(rad)), 1)
+            
+        screen.blit(surf, (draw_x - cx, draw_y - cy))
+
 class Player:
     def __init__(self):
         self.width = 40
@@ -1146,12 +2407,13 @@ class Player:
         self.last_shot = 0
         self.shoot_delay = 150
         self.last_torpedo = 0
+        self.last_secondary = 0
         self.torpedo_delay = 1000
         self.direction = pygame.math.Vector2(0, -1)
         self.angle = 270.0  # angle in degrees, pointing straight up (270)
         self.velocity = pygame.math.Vector2(0, 0)
         self.acceleration = 0.35
-        self.max_speed = 6.0
+        self.max_speed = 7.0
         self.rotation_speed = 4.0  # degrees per frame
         self.drag = 0.96  # gradual momentum decay (friction)
         
@@ -1169,21 +2431,38 @@ class Player:
         # Economy & Progression
         self.credits = 0
         self.scraps = 0
+        self.level = 1
+        self.xp = 0
+        self.skill_points = 0
+        self.class_name = 'RANGER'
+        self.base_max_shields = 3
+        self.damage_multiplier = 1.0
+        self.cool_rate_bonus = 0.0
+        self.loot_bonus = 0.0
+        self.shield_bonus = 0.0
         
         # Upgrade Part Levels
         self.skills = {
             'shield': 0,          # Max 4 (Base 1 shield capacity, upgrades up to 5)
             'deflector': 0,       # Max 1 (Deflector Shielding. Regen delay: 5s -> 3s)
             'coolant': 0,         # Max 4 (Standard gun cools down +25% faster per level)
-            'weapon': 0,          # Max 2 (0: Single, 1: Double, 2: spreading Triple)
+            'weapon': 0,          # Max 1 (0: Single, 1: Double)
             'overcharge': 0,      # Max 1 (Overcharged Capacitors. Shoot delay -30%)
             'torpedo': 0,         # Max 4 (-15% cooldown, +15% explosion size per level)
             'cluster_torpedo': 0, # Max 1 (Cluster Torpedo Warhead. Spawns sub-explosions)
             'hyperdrive': 0,      # Max 1 (Hyperdrive Core. Warp charge: 3s -> 1s)
+            'shotgun_unlocked': 0,
             'shotgun_mod': 0,     # Max 3 (Shotgun Heat -15%, Damage +15% per rank)
+            'railgun_unlocked': 0,
             'railgun_mod': 0,     # Max 3 (Railgun Delay -15% per rank)
+            'bomb_unlocked': 0,
             'bomb_cap': 0,        # Max 3 (Bomb Max Ammo +2, Radius +15% per rank)
+            'missile_unlocked': 0,
             'missile_cap': 0,     # Max 3 (Missile Max Ammo +3, Speed +15% per rank)
+            
+            'class_tier1': 0,     # Unique Tier 1 class upgrade (Max 3)
+            'class_tier2': 0,     # Unique Tier 2 class upgrade (Max 3)
+            'class_tier3': 0      # Unique Tier 3 class ultimate (Max 1)
         }
         
         # Weapon Switching and Ammo Stats
@@ -1204,13 +2483,160 @@ class Player:
         self.invulnerable_time = 0
         self.invulnerable_duration = 1000
         self.last_hit_time = 0
-        self.shield_regen_delay = 5000
+        self.shield_regen_delay = 5000 # Default value
+        self.debug_invincible = False
         self.last_regen_time = 0
         self.regen_cooldown = 3000
+        
+        # Special Abilities
+        self.last_ability = -20000
+        self.ability_cooldown = 15000
+        self.ability_timer = 0
+        self.last_special = -30000
+        self.special_cooldown = 20000
+        self.special_timer = 0
+        
+        # Flares
+        self.flare_ammo = 10
+        self.max_flare_ammo = 10
+        self.last_flare_time = 0
+        self.flare_cooldown = 5000 # 5 seconds
         
         # Dash evading mechanics
         self.last_dash = 0
         self.dash_cooldown = 1000
+        self.is_cloaked = False
+        self.banking_amount = 0.0 # -1.0 to 1.0 based on turn sharpess
+        
+        # Shield bubble & Weapon Modifiers states
+        self.shield_bubble_timer = 0
+        self.has_mod_piercing = False
+        self.has_mod_split = False
+        self.has_mod_siphon = False
+
+    def set_class(self, class_name):
+        self.class_name = class_name
+        t1 = self.skills.get('class_tier1', 0)
+        t2 = self.skills.get('class_tier2', 0)
+        t3 = self.skills.get('class_tier3', 0)
+        
+        if class_name == 'RANGER':
+            self.damage_multiplier = 1.3
+            self.max_speed = 9.8 + (t1 * 0.5)
+            self.base_max_shields = 3
+            self.cool_rate = 0.45
+            self.acceleration = 0.5
+            self.shoot_delay = 150
+            self.bullet_speed = 22
+            self.heat_per_shot = 5.0
+            self.bullet_color = CYAN
+            self.dash_cooldown = max(400, 1000 - (t2 * 200))
+            self.ability_duration_mod = 1.0 if t3 == 0 else 2.0
+            self.class_upgrades = {
+                'tier1_name': 'Advanced Thrusters', 'tier1_desc': '+Speed per rank.',
+                'tier2_name': 'Evasion Jets', 'tier2_desc': 'Reduces Dash cooldown.',
+                'tier3_name': 'Infinite Overdrive', 'tier3_desc': 'Overdrive lasts twice as long.',
+                'special_name': 'Afterburner', 'special_desc': 'Temporary massive speed boost.'
+            }
+        elif class_name == 'ENGINEER':
+            self.damage_multiplier = 1.0
+            self.max_speed = 8.8
+            self.base_max_shields = 4 + t1
+            self.cool_rate = 0.8 + (t2 * 0.2)
+            self.acceleration = 0.45
+            self.shoot_delay = 180
+            self.bullet_speed = 20
+            self.heat_per_shot = 3.5
+            self.bullet_color = GOLD
+            self.shield_regen_delay = 5000 if t3 == 0 else 2000
+            self.class_upgrades = {
+                'tier1_name': 'Heavy Plating', 'tier1_desc': '+Max Shields per rank.',
+                'tier2_name': 'System Overclock', 'tier2_desc': 'Increases drone fire rate.',
+                'tier3_name': 'Rapid Recharger', 'tier3_desc': 'Sentry Drones last 50% longer.',
+                'special_name': 'System Flush', 'special_desc': 'Instantly restore shield and clear heat.'
+            }
+        elif class_name == 'VANGUARD':
+            self.damage_multiplier = 0.9
+            self.max_speed = 7.8
+            self.base_max_shields = 6 + t1
+            self.cool_rate = 0.35
+            self.acceleration = 0.35
+            self.shoot_delay = 220
+            self.bullet_speed = 17
+            self.heat_per_shot = 7.0
+            self.bullet_color = MAGENTA
+            self.ability_cooldown_mod = 1.0 if t2 == 0 else 0.7
+            self.dash_damage = 0 if t3 == 0 else 5.0
+            self.class_upgrades = {
+                'tier1_name': 'Titanium Hull', 'tier1_desc': '+Max Shields per rank.',
+                'tier2_name': 'Hardened Lattice', 'tier2_desc': 'Increases Guardian Crystal health.',
+                'tier3_name': 'Kinetic Ram', 'tier3_desc': 'Dashing damages enemies you hit.',
+                'special_name': 'Titan Pulse', 'special_desc': 'Unleash a massive invulnerability shockwave.'
+            }
+        elif class_name == 'SNIPER':
+            self.damage_multiplier = 1.8 + (t1 * 0.4)
+            self.max_speed = 10.5
+            self.base_max_shields = 2
+            self.cool_rate = 0.3
+            self.acceleration = 0.4
+            self.shoot_delay = 350
+            self.bullet_speed = 38
+            self.heat_per_shot = 9.0
+            self.bullet_color = YELLOW
+            self.bullet_speed_mod = 1.0 + (t2 * 0.2)
+            self.airstrike_count = 2 if t3 == 0 else 4
+            self.class_upgrades = {
+                'tier1_name': 'Rail Accelerators', 'tier1_desc': '+Damage multiplier per rank.',
+                'tier2_name': 'Target Lock', 'tier2_desc': '+Bullet speed per rank.',
+                'tier3_name': 'Orbital Fleet', 'tier3_desc': 'Airstrike spawns 4 ships instead of 2.',
+                'special_name': 'Missile Swarm', 'special_desc': 'Fires 4 homing missiles.'
+            }
+        elif class_name == 'ASSASSIN':
+            self.damage_multiplier = 1.1 + (t3 * 0.5)
+            self.max_speed = 12.0 + (t1 * 0.5)
+            self.base_max_shields = 2
+            self.cool_rate = 0.6
+            self.acceleration = 0.65
+            self.shoot_delay = 110
+            self.bullet_speed = 25
+            self.heat_per_shot = 4.0
+            self.bullet_color = PURPLE
+            self.cloak_duration = 2000 + (t2 * 500)
+            self.specialist_weapon_name = "VENOM NEEDLE"
+            self.class_upgrades = {
+                'tier1_name': 'Shadow Engines', 'tier1_desc': '+Speed per rank.',
+                'tier2_name': 'Stealth Capacitors', 'tier2_desc': '+Cloak duration per rank.',
+                'tier3_name': 'Critical Ambush', 'tier3_desc': 'Massively increases damage.',
+                'special_name': 'Warp Strike', 'special_desc': 'Teleports forward and clears heat.'
+            }
+            
+        self.max_shields = self.base_max_shields + self.skills['shield']
+        self.shields = self.max_shields
+        self.shields = min(self.shields, self.max_shields)
+
+    def award_xp(self, amount):
+        if self.is_dead:
+            return
+        self.xp += int(amount)
+        while self.xp >= self.xp_to_next_level():
+            self.xp -= self.xp_to_next_level()
+            self.level += 1
+            self.skill_points += 1
+            self.max_shields = max(3, self.max_shields + 1)
+            self.shields = min(self.max_shields, self.shields + 1)
+
+    def xp_to_next_level(self):
+        return 120 + (self.level - 1) * 35
+
+    def apply_loot(self, loot):
+        for stat, value in loot.effects:
+            if stat == 'shield':
+                self.max_shields += 1
+                self.shields = min(self.max_shields, self.shields + 1)
+            elif stat == 'cooldown':
+                self.cool_rate_bonus += value
+            elif stat == 'damage':
+                self.damage_multiplier += value
 
     def add_credits(self, amount):
         if self.is_dead:
@@ -1223,8 +2649,10 @@ class Player:
         
         if self.invulnerable and current_time - self.invulnerable_time > self.invulnerable_duration:
             self.invulnerable = False
+            if hasattr(self, 'is_cloaked'):
+                self.is_cloaked = False
 
-        self.max_shields = 3 + self.skills['shield']
+        self.max_shields = self.base_max_shields + self.skills['shield']
         regen_delay = 3000 if self.skills.get('deflector', 0) > 0 else self.shield_regen_delay
         if self.shields < self.max_shields:
             if current_time - self.last_hit_time > regen_delay:
@@ -1251,11 +2679,19 @@ class Player:
 
     def handle_input(self, current_time, camera_y, scale_info, camera_x=0, is_hub=False, limit_y=False):
         if self.is_dead:
-            return []
+            return [], [], [], [], []
 
         keys = pygame.key.get_pressed()
         
-        # 1. MOUSE-FACING ORIENTATION (smooth turning over time)
+        center_x = self.x + self.width // 2
+        center_y = self.y + self.height // 2
+        projectiles = []
+        new_flares = []
+        new_support = []
+        new_drones = []
+        new_crystals = []
+
+        # 1. MOUSE-FACING ORIENTATION (moved up to define dir_r for abilities)
         mouse_x, mouse_y = pygame.mouse.get_pos()
         offset_x, offset_y, new_w, new_h = scale_info
         mouse_x = (mouse_x - offset_x) * (VIRTUAL_WIDTH / new_w)
@@ -1264,9 +2700,6 @@ class Player:
             mouse_y += camera_y
             mouse_x += camera_x
             
-        center_x = self.x + self.width // 2
-        center_y = self.y + self.height // 2
-        
         target_dir = pygame.math.Vector2(mouse_x - center_x, mouse_y - center_y)
         if target_dir.length() > 5:
             target_angle = math.degrees(math.atan2(target_dir.y, target_dir.x)) % 360
@@ -1276,19 +2709,119 @@ class Player:
             
             # Rotation speed (degrees per frame) - lower values mean slower turning
             max_turn = 4.5
+            self.banking_amount = max(-1.0, min(1.0, angle_diff / max_turn))
             if abs(angle_diff) <= max_turn:
                 self.angle = target_angle
             else:
                 self.angle = (self.angle + math.copysign(max_turn, angle_diff)) % 360
+        else:
+            self.banking_amount *= 0.9
 
-        # Calculate current directional vectors from the actual current angle
         rad = math.radians(self.angle)
         self.direction = pygame.math.Vector2(math.cos(rad), math.sin(rad))
         dir_r = pygame.math.Vector2(-self.direction.y, self.direction.x) # right vector
 
+        # Handle Special Ability (E key)
+        is_overdrive = (self.class_name == 'RANGER' and current_time < self.ability_timer)
+        if keys[pygame.K_e] and current_time - self.last_ability > self.ability_cooldown * getattr(self, 'ability_cooldown_mod', 1.0):
+            self.last_ability = current_time
+            if self.class_name == 'RANGER':
+                self.ability_timer = current_time + 4000 # 4 second duration
+                self.ability_timer = current_time + (4000 * getattr(self, 'ability_duration_mod', 1.0))
+                is_overdrive = True
+            elif self.class_name == 'ENGINEER':
+                new_drones.append(SentryDrone(self, GOLD, 0))
+                new_drones.append(SentryDrone(self, GOLD, math.pi))
+            elif self.class_name == 'VANGUARD':
+                # Spawns the new Player-Specific crystal
+                new_crystals.append(PlayerShieldCrystal(center_x, center_y))
+            elif self.class_name == 'SNIPER':
+                # Airstrike: Spawn support ships coming from the opposite direction
+                self.last_ability = current_time
+                count = getattr(self, 'airstrike_count', 2)
+                offset_step = 80
+                
+                spawn_center_x = center_x - self.direction.x * 800
+                spawn_center_y = center_y - self.direction.y * 800
+                airstrike_angle = self.angle
+                
+                for i in range(count):
+                    offset_r = dir_r * (offset_step * (i - (count-1)/2.0))
+                    new_support.append(SupportShip(spawn_center_x + offset_r.x, spawn_center_y + offset_r.y, airstrike_angle, YELLOW, owner=self))
+            elif self.class_name == 'ASSASSIN':
+                # Stealth Cloak: Brief invulnerability and speed burst
+                self.invulnerable = True
+                self.invulnerable_time = current_time
+                self.invulnerable_duration = getattr(self, 'cloak_duration', 2000)
+                self.is_cloaked = True
+                self.velocity += self.direction * 12.0
+        
+        # Handle Specialist Ability (Q key)
+        if keys[pygame.K_q] and current_time - self.last_special > self.special_cooldown:
+            self.last_special = current_time
+            if self.class_name == 'RANGER':
+                self.special_timer = current_time + 2000
+                self.speed_multiplier = 2.0
+            elif self.class_name == 'ENGINEER':
+                self.shields = min(self.max_shields, self.shields + 1)
+                self.heat = 0
+                # Release a pulse of 8 bullets
+                for angle in range(0, 360, 45):
+                    rad = math.radians(angle)
+                    projectiles.append(Bullet(center_x, center_y, math.cos(rad), math.sin(rad)))
+            elif self.class_name == 'VANGUARD':
+                self.invulnerable = True
+                self.invulnerable_time = current_time
+                self.invulnerable_duration = 3000
+                # Release a massive shockwave of 24 bullets
+                for angle in range(0, 360, 15):
+                    rad = math.radians(angle)
+                    projectiles.append(Bullet(center_x, center_y, math.cos(rad), math.sin(rad)))
+            elif self.class_name == 'SNIPER':
+                for i in range(4):
+                    ang = math.radians(self.angle - 30 + i * 20)
+                    # Spawn at offset and converge to player
+                    start_angle = math.radians(self.angle + 140 + i * 20)
+                    sx, sy = center_x + math.cos(start_angle) * 200, center_y + math.sin(start_angle) * 200
+                    projectiles.append(HomingMissile(sx, sy, -math.cos(start_angle), -math.sin(start_angle), shooter=self, converge_pos=pygame.math.Vector2(center_x, center_y)))
+            elif self.class_name == 'ASSASSIN':
+                self.x += self.direction.x * 250
+                self.y += self.direction.y * 250
+                self.heat = 0
+                self.invulnerable = True
+                self.invulnerable_time = current_time
+                self.invulnerable_duration = 500
+                # Small burst
+                for offset in [-20, 0, 20]:
+                    r_dir = self.direction.rotate(offset)
+                    projectiles.append(Bullet(self.x + self.width//2, self.y + self.height//2, r_dir.x, r_dir.y, speed=15, life=18, damage=1.5, color=PURPLE))
+
+        if getattr(self, 'special_timer', 0) > 0 and current_time > self.special_timer:
+            self.special_timer = 0
+            self.speed_multiplier = 1.0
+
+        # Handle Flares (Left Shift)
+        if keys[pygame.K_LSHIFT] and self.flare_ammo > 0 and current_time - self.last_flare_time > self.flare_cooldown:
+            self.flare_ammo -= 1
+            self.last_flare_time = current_time
+            # Spawn 10 flares in a fan-shaped spread behind the player
+            flare_x = center_x - self.direction.x * (self.height // 2)
+            flare_y = center_y - self.direction.y * (self.height // 2)
+            base_angle = math.degrees(math.atan2(-self.direction.y, -self.direction.x))
+            for i in range(10):
+                angle_offset = -40 + (80 / 9) * i
+                rad = math.radians(base_angle + angle_offset)
+                speed = random.uniform(2.0, 4.5)
+                fdx = math.cos(rad) * speed
+                fdy = math.sin(rad) * speed
+                new_flares.append(Flare(flare_x, flare_y, fdx, fdy))
+
         # 2. ACCELERATION / MOVEMENT THRUSTER INPUTS
         accel = self.acceleration * self.speed_multiplier
         max_sp = self.max_speed * self.speed_multiplier
+        if is_overdrive:
+            accel *= 1.5
+            max_sp *= 1.5
         
         # Up/W -> thrust forward
         if keys[pygame.K_UP] or keys[pygame.K_w]:
@@ -1314,24 +2847,36 @@ class Player:
         self.x += self.velocity.x
         self.y += self.velocity.y
 
-        self.x = max(-3000, min(VIRTUAL_WIDTH + 3000 - self.width, self.x))
         if limit_y:
+            self.x = max(0, min(VIRTUAL_WIDTH - self.width, self.x))
             self.y = max(0, min(VIRTUAL_HEIGHT - self.height, self.y))
         else:
+            # Wrap around the planet (X-axis) seamlessly
+            map_width = VIRTUAL_WIDTH + 4000
+            if self.x < -2000:
+                self.x += map_width
+            elif self.x > VIRTUAL_WIDTH + 2000:
+                self.x -= map_width
             # Constrain player so they cannot fly below the camera's viewport
             self.y = min(self.y, camera_y + VIRTUAL_HEIGHT - self.height)
             
         self.rect.topleft = (self.x, self.y)
 
         if is_hub:
-            return []
+            return [], [], [], [], []
 
-        projectiles = []
         mouse_buttons = pygame.mouse.get_pressed()
         
         actual_cool_rate = self.cool_rate * (1.0 + 0.25 * self.skills['coolant'])
+        
+        # Plasma Biome Heat Gimmick
+        is_plasma = getattr(self, 'in_plasma_biome', False) # Set by Game instance
+        if is_plasma:
+            actual_cool_rate *= 0.6
+
         if self.heat > 0:
-            self.heat = max(0.0, self.heat - actual_cool_rate)
+            # Purge heat twice as fast during overdrive
+            self.heat = max(0.0, self.heat - (actual_cool_rate * 2.0 if is_overdrive else actual_cool_rate))
             if self.overheated and self.heat == 0.0:
                 self.overheated = False
 
@@ -1339,45 +2884,115 @@ class Player:
         if mouse_buttons[0]:
             if not self.overheated:
                 actual_shoot_delay = self.shoot_delay * 0.70 if self.skills.get('overcharge', 0) > 0 else self.shoot_delay
+                if is_overdrive:
+                    actual_shoot_delay *= 0.5 # Double fire rate
+                
                 if current_time - self.last_shot > actual_shoot_delay:
                     self.last_shot = current_time
-                    self.heat += self.heat_per_shot
-                    if self.heat >= self.max_heat:
-                        self.heat = self.max_heat
-                        self.overheated = True
-                        
                     tip_x = center_x + self.direction.x * (self.height // 2)
                     tip_y = center_y + self.direction.y * (self.height // 2)
                     
-                    weapon_level = self.skills['weapon']
-                    if weapon_level == 0:
-                        projectiles.append(Bullet(tip_x, tip_y, self.direction.x, self.direction.y))
-                    elif weapon_level == 1:
-                        right_vector = pygame.math.Vector2(-self.direction.y, self.direction.x) * 8
-                        projectiles.append(Bullet(tip_x - right_vector.x, tip_y - right_vector.y, self.direction.x, self.direction.y))
-                        projectiles.append(Bullet(tip_x + right_vector.x, tip_y + right_vector.y, self.direction.x, self.direction.y))
-                    else:
-                        projectiles.append(Bullet(tip_x, tip_y, self.direction.x, self.direction.y))
-                        dir_left = self.direction.rotate(-15)
-                        dir_right = self.direction.rotate(15)
-                        projectiles.append(Bullet(tip_x, tip_y, dir_left.x, dir_left.y))
-                        projectiles.append(Bullet(tip_x, tip_y, dir_right.x, dir_right.y))
+                    b_speed = 18 * getattr(self, 'bullet_speed_mod', 1.0)
 
-        # Right click to shoot AOE torpedoes
+                    if self.active_primary == 0: # Laser
+                        weapon_level = self.skills['weapon']
+                        if weapon_level == 0:
+                            b = Bullet(tip_x, tip_y, self.direction.x, self.direction.y, speed=b_speed)
+                            if self.has_mod_piercing: b.piercing = True
+                            projectiles.append(b)
+                        else: # Level 1 (Double)
+                            right_vector = pygame.math.Vector2(-self.direction.y, self.direction.x) * 8
+                            b1 = Bullet(tip_x - right_vector.x, tip_y - right_vector.y, self.direction.x, self.direction.y, speed=b_speed)
+                            b2 = Bullet(tip_x + right_vector.x, tip_y + right_vector.y, self.direction.x, self.direction.y, speed=b_speed)
+                            if self.has_mod_piercing:
+                                b1.piercing = True
+                                b2.piercing = True
+                            projectiles.append(b1)
+                            projectiles.append(b2)
+                        
+                        if self.has_mod_split:
+                            left_dir = self.direction.rotate(-15)
+                            right_dir = self.direction.rotate(15)
+                            bl = Bullet(tip_x, tip_y, left_dir.x, left_dir.y, speed=b_speed)
+                            br = Bullet(tip_x, tip_y, right_dir.x, right_dir.y, speed=b_speed)
+                            if self.has_mod_piercing:
+                                bl.piercing = True
+                                br.piercing = True
+                            projectiles.append(bl)
+                            projectiles.append(br)
+                        
+                        if not is_overdrive:
+                            heat_gain = self.heat_per_shot * (1.25 if is_plasma else 1.0)
+                            self.heat = min(self.max_heat, self.heat + heat_gain)
+                            if self.heat >= self.max_heat:
+                                self.overheated = True
+
+                    elif self.active_primary == 1 and self.skills['shotgun_unlocked']: # Shotgun
+                        sm = self.skills['shotgun_mod']
+                        final_heat = 12.0 - (sm * 1.5)
+                        for offset in [-20, -10, 0, 10, 20]:
+                            r_dir = self.direction.rotate(offset)
+                            projectiles.append(Bullet(tip_x, tip_y, r_dir.x, r_dir.y, speed=15, life=18, damage=0.5 + 0.15*sm, color=ORANGE))
+                        
+                        if not is_overdrive:
+                            heat_gain = final_heat * (1.25 if is_plasma else 1.0)
+                            self.heat = min(self.max_heat, self.heat + heat_gain)
+                            if self.heat >= self.max_heat:
+                                self.overheated = True
+
+                    elif self.active_primary == 2 and self.skills['railgun_unlocked']: # Railgun
+                        rm = self.skills['railgun_mod']
+                        final_heat = 15.0
+                        projectiles.append(Bullet(tip_x, tip_y, self.direction.x, self.direction.y, speed=25, life=100, piercing=True, damage=6.0 + 2.0*rm, color=CYAN))
+                        
+                        if not is_overdrive:
+                            heat_gain = final_heat * (1.25 if is_plasma else 1.0)
+                            self.heat = min(self.max_heat, self.heat + heat_gain)
+                            if self.heat >= self.max_heat:
+                                self.overheated = True
+
+        # Right click to shoot Secondary weapons
         if mouse_buttons[2]:
-            actual_torpedo_delay = self.torpedo_delay * (1.0 - 0.15 * self.skills['torpedo'])
-            if current_time - self.last_torpedo > actual_torpedo_delay:
-                self.last_torpedo = current_time
-                tip_x = center_x + self.direction.x * (self.height // 2)
-                tip_y = center_y + self.direction.y * (self.height // 2)
-                scale = 1.0 + 0.15 * self.skills['torpedo']
-                projectiles.append(Torpedo(tip_x, tip_y, self.direction.x, self.direction.y, scale))
+            tip_x = center_x + self.direction.x * (self.height // 2)
+            tip_y = center_y + self.direction.y * (self.height // 2)
+            
+            if self.active_secondary == 0: # Torpedo
+                actual_torpedo_delay = self.torpedo_delay * (1.0 - 0.15 * self.skills['torpedo'])
+                if current_time - self.last_torpedo > actual_torpedo_delay:
+                    self.last_torpedo = current_time
+                    scale = 1.0 + 0.15 * self.skills['torpedo']
+                    projectiles.append(Torpedo(tip_x, tip_y, self.direction.x, self.direction.y, scale))
+            
+            elif self.active_secondary == 1 and self.skills['bomb_unlocked'] and self.bomb_ammo > 0: # Bomb
+                if current_time - self.last_secondary > 500:
+                    self.last_secondary = current_time
+                    self.bomb_ammo -= 1
+                    projectiles.append(ProxBomb(tip_x, tip_y, self.direction.x, self.direction.y, scale=1.0 + 0.15*self.skills['bomb_cap']))
+                    
+            elif self.active_secondary == 2 and self.skills['missile_unlocked'] and self.missile_ammo > 0: # Missile
+                if current_time - self.last_secondary > 400:
+                    self.last_secondary = current_time
+                    self.missile_ammo -= 1
+                    projectiles.append(HomingMissile(tip_x, tip_y, self.direction.x, self.direction.y, scale=1.0 + 0.15*self.skills['missile_cap'], shooter=self))
 
-        return projectiles
+        return projectiles, new_flares, new_support, new_drones, new_crystals
 
     def draw(self, screen, camera_y, camera_x=0):
         if self.is_dead:
             return
+
+        current_time = pygame.time.get_ticks()
+        if getattr(self, 'is_cloaked', False):
+            # Draw a shimmer effect instead of the full ship
+            draw_x = self.x - camera_x
+            draw_y = self.y - camera_y
+            center_x = draw_x + self.width // 2
+            center_y = draw_y + self.height // 2
+            
+            radius = self.width // 2 + 5
+            alpha = 80 + 40 * math.sin(current_time * 0.02)
+            pygame.draw.circle(screen, (200, 200, 255, alpha), (int(center_x), int(center_y)), radius, width=3)
+            return # Don't draw the rest of the ship
 
         draw_x = self.x - camera_x
         draw_y = self.y - camera_y
@@ -1389,8 +3004,28 @@ class Player:
         dir_f = self.direction # forward
         dir_r = pygame.math.Vector2(-self.direction.y, self.direction.x) # right
         
+        # Banking perspective shift
+        bank_squeeze = 1.0 - abs(self.banking_amount) * 0.35
+        lw_sqz = 1.0 - max(0, -self.banking_amount) * 0.6
+        rw_sqz = 1.0 - max(0, self.banking_amount) * 0.6
+
+        # Ability state for visuals
+        is_overdrive = (self.class_name == 'RANGER' and current_time < self.ability_timer)
+        
         # Color palettes
         color = CYAN
+        if self.class_name == 'ENGINEER':
+            color = GOLD
+        elif self.class_name == 'VANGUARD':
+            color = MAGENTA
+        elif self.class_name == 'SNIPER':
+            color = YELLOW
+        elif self.class_name == 'ASSASSIN':
+            color = PURPLE
+        
+        if (is_overdrive or (self.class_name == 'ASSASSIN' and self.invulnerable)) and current_time % 200 < 100:
+            color = WHITE
+
         if self.invulnerable:
             if pygame.time.get_ticks() % 100 < 50:
                 color = WHITE
@@ -1401,70 +3036,100 @@ class Player:
         # 1. THRUSTER FLAMES (flickers based on movement inputs)
         keys = pygame.key.get_pressed()
         if keys[pygame.K_UP] or keys[pygame.K_w] or self.velocity.length() > 1:
-            flame_len = 15 + random.randint(0, 10) if (keys[pygame.K_UP] or keys[pygame.K_w]) else 5 + random.randint(0, 5)
-            rear_center = center - dir_f * (self.height // 2)
+            pulse = (math.sin(current_time * 0.05) + 1) / 2
+            flame_len = (18 + random.randint(-5, 15)) * (0.8 + 0.4 * pulse)
+            if not (keys[pygame.K_UP] or keys[pygame.K_w]): flame_len *= 0.5
+            y_jitter = random.uniform(-2, 2)
+            rear_center = center - dir_f * (self.height // 2) + dir_f * y_jitter
             flame_tip = rear_center - dir_f * flame_len
-            flame_l = rear_center - dir_r * 8
-            flame_r = rear_center + dir_r * 8
-            pygame.draw.polygon(screen, ORANGE, [rear_center, flame_l, flame_tip, flame_r])
-            pygame.draw.polygon(screen, YELLOW, [rear_center, rear_center - dir_r * 4, rear_center - dir_f * (flame_len * 0.6), rear_center + dir_r * 4])
+            flame_l = rear_center - dir_r * (8 * bank_squeeze)
+            flame_r = rear_center + dir_r * (8 * bank_squeeze)
+            flame_col = random.choice([CYAN, WHITE]) if is_overdrive else random.choice([ORANGE, YELLOW, RED])
+            pygame.draw.polygon(screen, flame_col, [rear_center, flame_l, flame_tip, flame_r])
+            pygame.draw.line(screen, WHITE if is_overdrive else YELLOW, rear_center, rear_center - dir_f * (flame_len * 0.65), 1)
 
         # 2. WINGS
-        lw_tip = center - dir_f * 5 - dir_r * (self.width // 2)
+        lw_tip = center - dir_f * 5 - dir_r * (self.width // 2 * lw_sqz)
         lw_base_in = center - dir_f * (self.height // 2) - dir_r * 5
-        lw_base_out = center - dir_f * (self.height // 3) - dir_r * (self.width // 2)
+        lw_base_out = center - dir_f * (self.height // 3) - dir_r * (self.width // 2 * lw_sqz)
         pygame.draw.polygon(screen, SLATE_GRAY, [center, lw_tip, lw_base_out, lw_base_in])
         
-        rw_tip = center - dir_f * 5 + dir_r * (self.width // 2)
+        rw_tip = center - dir_f * 5 + dir_r * (self.width // 2 * rw_sqz)
         rw_base_in = center - dir_f * (self.height // 2) + dir_r * 5
-        rw_base_out = center - dir_f * (self.height // 3) + dir_r * (self.width // 2)
+        rw_base_out = center - dir_f * (self.height // 3) + dir_r * (self.width // 2 * rw_sqz)
         pygame.draw.polygon(screen, SLATE_GRAY, [center, rw_tip, rw_base_out, rw_base_in])
 
         # 3. WING CANNONS (Based on Weapon Level)
         weapon_level = self.skills['weapon']
         if weapon_level >= 1:
-            pygame.draw.line(screen, color, lw_tip, lw_tip + dir_f * 12, width=3)
-            pygame.draw.line(screen, color, rw_tip, rw_tip + dir_f * 12, width=3)
-        if weapon_level >= 2:
-            pygame.draw.line(screen, color, center + dir_f * (self.height // 2), center + dir_f * (self.height // 2 + 15), width=4)
+            pygame.draw.line(screen, color, lw_tip, lw_tip + dir_f * 12, width=2)
+            pygame.draw.line(screen, color, rw_tip, rw_tip + dir_f * 12, width=2)
 
-        # 4. MAIN HULL
-        hull_tip = center + dir_f * (self.height // 2)
-        hull_left = center - dir_f * (self.height // 4) - dir_r * 8
-        hull_right = center - dir_f * (self.height // 4) + dir_r * 8
+        # 4. MAIN HULL (Triangle shape with 3D tilt parallax)
+        hull_center = center + dir_r * (self.banking_amount * 6)
+        hull_tip = hull_center + dir_f * (self.height // 2)
+        hull_left = hull_center - dir_f * (self.height // 4) - dir_r * (8 * bank_squeeze)
+        hull_right = hull_center - dir_f * (self.height // 4) + dir_r * (8 * bank_squeeze)
         pygame.draw.polygon(screen, color, [hull_tip, hull_left, hull_right])
 
-        # 5. COCKPIT GLASS
-        glass_tip = center + dir_f * (self.height // 3)
-        glass_left = center + dir_f * (self.height // 8) - dir_r * 4
-        glass_right = center + dir_f * (self.height // 8) + dir_r * 4
+        # 5. COCKPIT GLASS (Enhanced 3D tilt parallax)
+        cockpit_center = center + dir_r * (self.banking_amount * 10)
+        glass_tip = cockpit_center + dir_f * (self.height // 3)
+        glass_left = cockpit_center + dir_f * (self.height // 8) - dir_r * (4 * bank_squeeze)
+        glass_right = cockpit_center + dir_f * (self.height // 8) + dir_r * (4 * bank_squeeze)
         pygame.draw.polygon(screen, WHITE, [glass_tip, glass_left, glass_right])
 
-        # 6. SHIELD FORCEFIELD (pulsing cyan circle when shields > 0)
+        # 6. SHIELD FORCEFIELD (flashes brighter and thicker when hit)
         if self.shields > 0:
-            glow_surf = pygame.Surface((self.width * 2, self.height * 2), pygame.SRCALPHA)
-            glow_intensity = 30 + int(15 * math.sin(pygame.time.get_ticks() * 0.01))
-            pygame.draw.circle(glow_surf, (0, 255, 255, glow_intensity), (self.width, self.height), int(self.width * 0.9), width=2)
-            screen.blit(glow_surf, (int(center_x - self.width), int(center_y - self.height)))
+            is_hit_recently = (current_time - getattr(self, 'shield_bubble_timer', 0) < 300)
+            if is_hit_recently:
+                glow_color = (0, 255, 255, 200)
+                width_val = 4
+                radius = int(self.width * 1.0)
+            else:
+                glow_intensity = 30 + int(15 * math.sin(current_time * 0.01))
+                glow_color = (0, 255, 255, glow_intensity)
+                width_val = 2
+                radius = int(self.width * 0.9)
+            pygame.draw.circle(screen, glow_color, (int(center_x), int(center_y)), radius, width=width_val)
 
 class Game:
     def __init__(self):
         pygame.init()
+        global SOUNDS
+        if SOUNDS is None:
+            SOUNDS = SoundManager()
         # Enable RESIZABLE screen mode
         self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
         self.virtual_screen = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
-        pygame.display.set_caption("Space Shooter")
+        self.ui_surface = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+        pygame.display.set_caption("Zenith")
         self.clock = pygame.time.Clock()
         self.font = pygame.font.SysFont("Arial", 24)
         self.small_font = pygame.font.SysFont("Arial", 16)
         self.large_font = pygame.font.SysFont("Arial", 64)
         
         # State Variables
-        self.state = 'MAIN_MENU'
+        self.player_name = ""
+        self.state = 'INTRO'
+        self.intro_start_time = pygame.time.get_ticks()
         self.current_zone = 'HUB'
+        self.selected_class = 'RANGER'
         self.camera_y = 0
         self.camera_x = 0
         self.screen_shake = 0
+        self.debug_invincible = False
+        self.input_active = False # For player name input
+        self.dragging_volume = False
+        self.dragging_tint = False
+        self.dragging_vignette = False
+        self.dragging_softness = False
+        self.filter_tint_alpha = 50
+        self.filter_vignette_alpha = 100
+        self.filter_softness = 15
+        self.vignette_surface = self._generate_vignette()
+        self.hub_station_active = None
+        self.shop_tab = 'MAIN'
         
         # Letterbox offsets & sizes to prevent scaling distortion
         self.offset_x = 0
@@ -1479,33 +3144,104 @@ class Game:
         self.wormhole_pos = pygame.math.Vector2(600, -800)
         
         self.reset_game()
+        self._update_scaling()
+
+    def _generate_vignette(self):
+        w, h = 120, 90
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        cx, cy = w / 2, h / 2
+        max_dist = math.sqrt(cx**2 + cy**2)
+        for y in range(h):
+            for x in range(w):
+                dist = math.sqrt((x - cx)**2 + (y - cy)**2)
+                ratio = dist / max_dist
+                alpha = int(255 * (ratio ** 2))
+                surf.set_at((x, y), (0, 0, 0, min(255, alpha)))
+        return pygame.transform.smoothscale(surf, (VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+
+    def _update_scaling(self):
+        aspect_ratio = VIRTUAL_WIDTH / VIRTUAL_HEIGHT
+        window_ratio = SCREEN_WIDTH / SCREEN_HEIGHT
+        
+        if window_ratio > aspect_ratio:
+            self.new_width = int(SCREEN_HEIGHT * aspect_ratio)
+            self.new_height = SCREEN_HEIGHT
+            self.offset_x = (SCREEN_WIDTH - self.new_width) // 2
+            self.offset_y = 0
+        else:
+            self.new_width = SCREEN_WIDTH
+            self.new_height = int(SCREEN_WIDTH / aspect_ratio)
+            self.offset_x = 0
+            self.offset_y = (SCREEN_HEIGHT - self.new_height) // 2
 
     def reset_game(self):
         self.player = Player()
+        self.player.set_class(self.selected_class)
         self.bullets = []
         self.torpedoes = []
+        self.bombs = []
+        self.missiles = []
         self.enemies = []
+        self.support_ships = []
+        self.drones = []
+        self.flares = [] # New
         self.meteors = []
         self.stars = []
         self.particles = []
         self.materials = []
         self.scraps = []
+        self.gas_clouds = []
+        self.ambient_debris = []
+        self.derelicts = []
+        self.anomalies = []
+        self.small_portals = []
+        self.data_uplinks = []
+        self.shockwaves = []
         self.static_obstacles = []
         self.materials_collected = 0
         self.game_over = False
         self.running = True
+        self.loot_pickups = []
+        self.planet_features = []
+        self.planet_texture = None
+        self.planet_clouds = None
+        if not hasattr(self, 'player_name'):
+            self.player_name = ""
+        self.campaign_stage = getattr(self, 'campaign_stage', 1)
+        # Pre-cache planet mask for performance - ensured here so it exists if pausing in Hub
+        self.planet_mask = pygame.Surface((1600, 1600), pygame.SRCALPHA)
+        pygame.draw.circle(self.planet_mask, (255, 255, 255, 255), (800, 800), 800)
+
+        self.zoom_level = 1.0
+        self.quests = [
+            Quest('collect_cores', 'Reactor Jumpstart', 'Gather 5 Matrix Cores in the Asteroid Belt.', 5, 250, 120),
+            Quest('defeat_boss', 'Reactor Meltdown', 'Infiltrate Singularity Factory and defeat Reactor Boss.', 1, 400, 180),
+            Quest('defeat_orion', 'Citadel Siege', 'Defeat the Orion Citadel Boss to save the galaxy.', 1, 600, 300)
+        ]
+        self.active_quest = self.quests[min(len(self.quests)-1, self.campaign_stage - 1)]
         
         self.unlocked_zones = {
-            'ASTEROIDS': True, 'VULCAN': False, 'AQUARIS': False,
-            'NEBULA': False, 'PLASMA': False, 'VOID': False,
-            'QUANTUM': False, 'SINGULARITY': False, 'ORION': False
+            'ASTEROIDS': True, 
+            'VULCAN': self.campaign_stage >= 2, 
+            'AQUARIS': self.campaign_stage >= 2,
+            'NEBULA': self.campaign_stage >= 2, 
+            'PLASMA': self.campaign_stage >= 2, 
+            'VOID': self.campaign_stage >= 2,
+            'QUANTUM': self.campaign_stage >= 2, 
+            'SINGULARITY': self.campaign_stage >= 2, 
+            'ORION': self.campaign_stage >= 3
         }
-        self.current_hub_index = 1
+        self.current_hub_index = 3 if self.campaign_stage >= 3 else (2 if self.campaign_stage >= 2 else 1)
+
         
         # New gimmick / boss objects
         self.enemy_bullets = []
         self.boss = None
         self.boss_defeated = False
+        self.escape_sequence_active = False
+        self.escape_blackhole_pos = None
+        self.escape_blackhole_radius = 0.0
+        self.victory_start_time = 0
         self.player_death_timer = 0
         self.active_hub_portal = None
         self.shield_crystals = []
@@ -1545,23 +3281,133 @@ class Game:
             twinkle_offset = random.uniform(0, 100)
             self.stars.append([x, y, depth, size, color, twinkle_speed, twinkle_offset])
 
+    def _draw_background_nebula(self, screen, camera_y, camera_x, theme_color):
+        pass
+
+    def _generate_planet_clouds(self, zone_name):
+        tex_w, tex_h = 1024, 1024
+        tex = pygame.Surface((tex_w, tex_h), pygame.SRCALPHA)
+        tex.fill((0, 0, 0, 0)) # transparent background
+        
+        # Seed random number generator with zone name to ensure consistency
+        random.seed(zone_name + "_clouds")
+        
+        # Draw some soft white/translucent cloud bands
+        for _ in range(15):
+            cy = random.randint(0, tex_h)
+            cx = random.randint(0, tex_w)
+            cloud_w = random.randint(120, 320)
+            cloud_h = random.randint(32, 80)
+            alpha = random.randint(40, 110)
+            
+            # Draw elongated horizontal cloud strips
+            for ox in (-tex_w, 0, tex_w):
+                pygame.draw.ellipse(tex, (255, 255, 255, alpha), (cx + ox - cloud_w // 2, cy - cloud_h // 2, cloud_w, cloud_h))
+                
+        # Draw some soft round cloud puffs
+        for _ in range(20):
+            cx = random.randint(0, tex_w)
+            cy = random.randint(0, tex_h)
+            radius = random.randint(40, 120)
+            alpha = random.randint(30, 90)
+            
+            for ox in (-tex_w, 0, tex_w):
+                pygame.draw.circle(tex, (255, 255, 255, alpha), (cx + ox, cy), radius)
+                
+        random.seed()
+        return tex
+
+    def _generate_planet_texture(self, zone_name):
+        zone_color = BIOME_CONFIGS.get(zone_name, {'theme_color': GRAY})['theme_color']
+        tex_w, tex_h = 1024, 1024
+        tex = pygame.Surface((tex_w, tex_h))
+        
+        base_r = max(10, int(zone_color[0] * 0.15))
+        base_g = max(10, int(zone_color[1] * 0.15))
+        base_b = max(10, int(zone_color[2] * 0.15))
+        tex.fill((base_r, base_g, base_b))
+        
+        # Seed random number generator with zone name for consistency
+        random.seed(zone_name)
+        
+        # Draw horizontal clouds / bands (step size 8 for speed & smoothness)
+        for y in range(0, tex_h, 8):
+            factor = 0.05 + 0.15 * math.sin(y * 0.0125) + random.uniform(-0.02, 0.02)
+            br = max(0, min(255, int(base_r + zone_color[0] * factor)))
+            bg = max(0, min(255, int(base_g + zone_color[1] * factor)))
+            bb = max(0, min(255, int(base_b + zone_color[2] * factor)))
+            pygame.draw.rect(tex, (br, bg, bb), (0, y, tex_w, 8))
+            
+        # Draw some soft organic continent/cloud shapes
+        for _ in range(25):
+            cx = random.randint(0, tex_w)
+            cy = random.randint(0, tex_h)
+            radius = random.randint(60, 180)
+            factor = random.uniform(-0.08, 0.18)
+            cr = max(0, min(255, int(base_r + zone_color[0] * factor)))
+            cg = max(0, min(255, int(base_g + zone_color[1] * factor)))
+            cb = max(0, min(255, int(base_b + zone_color[2] * factor)))
+            
+            for ox in (-tex_w, 0, tex_w):
+                pygame.draw.circle(tex, (cr, cg, cb), (cx + ox, cy), radius)
+                
+        # Draw some craters with shading
+        for _ in range(12):
+            cx = random.randint(0, tex_w)
+            cy = random.randint(0, tex_h)
+            crater_r = random.randint(24, 64)
+            
+            sr = max(0, base_r - 20)
+            sg = max(0, base_g - 20)
+            sb = max(0, base_b - 20)
+            
+            hr = max(0, min(255, int(base_r + zone_color[0] * 0.25)))
+            hg = max(0, min(255, int(base_g + zone_color[1] * 0.25)))
+            hb = max(0, min(255, int(base_b + zone_color[2] * 0.25)))
+            
+            for ox in (-tex_w, 0, tex_w):
+                pygame.draw.circle(tex, (sr, sg, sb), (cx + ox, cy), crater_r)
+                pygame.draw.circle(tex, (hr, hg, hb), (cx + ox, cy), crater_r, width=4)
+                
+        random.seed()
+        return tex
+
     def setup_exploration_zone(self, zone_name):
         self.state = 'PLAYING'
         self.current_zone = zone_name
         self.bullets = []
         self.torpedoes = []
+        self.bombs = []
+        self.missiles = []
+        self.support_ships = []
+        self.drones = []
+        self.flares = [] # New
         self.enemies = []
         self.meteors = []
         self.materials = []
         self.scraps = []
+        self.gas_clouds = []
+        self.ambient_debris = []
+        self.derelicts = []
+        self.anomalies = []
+        self.small_portals = []
         self.static_obstacles = []
+        self.data_uplinks = []
+        self.shockwaves = []
         self.materials_collected = 0
         self.player.speed_multiplier = 1.0
         
         # New gimmick / boss objects
         self.enemy_bullets = []
-        self.boss = None
+        if zone_name == 'SINGULARITY':
+            self.boss = Boss('SINGULARITY', -2500)
+        else:
+            self.boss = None
         self.boss_defeated = False
+        self.boss_defeated_time = 0
+        self.escape_sequence_active = False
+        self.escape_blackhole_pos = None
+        self.escape_blackhole_radius = 0.0
         self.active_hub_portal = None
         self.shield_crystals = []
         self.gravity_wells = []
@@ -1574,6 +3420,31 @@ class Game:
         self.wormhole_spawned = False
         self.wormhole_charge_timer = 0
         
+        # Vary planet sizes dynamically per biome run (consistent for same biome)
+        random.seed(zone_name)
+        self.planet_radius = random.randint(400, 750)
+        random.seed()
+        
+        self.planet_mask = pygame.Surface((self.planet_radius * 2, self.planet_radius * 2), pygame.SRCALPHA)
+        pygame.draw.circle(self.planet_mask, (255, 255, 255, 255), (self.planet_radius, self.planet_radius), self.planet_radius)
+
+        # Generate pseudo-random terrain features for the planet scaled to dynamic dimensions
+        random.seed(self.current_zone)
+        self.planet_features = []
+        for _ in range(60):
+            fx = random.randint(0, 4000)
+            fy = random.randint(0, self.planet_radius * 2)
+            fr = random.randint(20, int(self.planet_radius * 0.22))
+            self.planet_features.append((fx, fy, fr))
+        random.seed()
+        
+        # Generate planet texture
+        raw_tex = self._generate_planet_texture(zone_name)
+        self.planet_texture = pygame.transform.smoothscale(raw_tex, (self.planet_radius * 2, self.planet_radius * 2))
+        
+        raw_clouds = self._generate_planet_clouds(zone_name)
+        self.planet_clouds = pygame.transform.smoothscale(raw_clouds, (self.planet_radius * 2, self.planet_radius * 2))
+        
         if zone_name in BIOME_CONFIGS:
             self.stars_color = BIOME_CONFIGS[zone_name]['stars_color']
         else:
@@ -1585,25 +3456,78 @@ class Game:
         self.camera_x = self.player.x - VIRTUAL_WIDTH // 2
         
         # Procedurally generate initial starting surroundings chunk
+        self.bg_structure = BackgroundStructure(zone_name)
         self._procedurally_generate_chunk(600, -1000)
+        self.level_start_time = pygame.time.get_ticks()
 
     def _procedurally_generate_chunk(self, from_y, to_y):
-        # Generate static obstacles (asteroids) as player flies up
-        # from_y is larger (bottom), to_y is smaller (top)
-        num_obstacles = 12
-        for _ in range(num_obstacles):
-            ox = random.randint(-1800, VIRTUAL_WIDTH + 1800)
-            oy = random.randint(int(to_y), int(from_y))
+        # Generate static obstacles as player flies up
+        if self.current_zone == 'SINGULARITY':
+            # Core Room y coordinate is -3000, x center is 600
             
-            overlap = False
-            for obs in self.static_obstacles:
-                if pygame.math.Vector2(ox, oy).distance_to(pygame.math.Vector2(obs.x, obs.y)) < 150:
-                    overlap = True
-            if not overlap:
-                self.static_obstacles.append(Meteor(ox, oy, is_static=True))
+            # Place Core Room walls if this chunk covers y = -3000
+            if to_y <= -2500 and from_y >= -3500:
+                self.static_obstacles = [obs for obs in self.static_obstacles if not (abs(obs.x - 600) < 550 and abs(obs.y - (-3000)) < 550)]
+                bx_min, bx_max = 200, 1000
+                by_min, by_max = -3400, -2600
+                
+                # Draw top wall with 240px wide gate at center (480 to 720)
+                for wx in range(bx_min, bx_max + 120, 120):
+                    if not (480 <= wx <= 720):
+                        self.static_obstacles.append(FactoryStructure(wx, by_min, 120, 120))
+                        
+                # Draw bottom wall with 240px wide gate at center (480 to 720)
+                for wx in range(bx_min, bx_max + 120, 120):
+                    if not (480 <= wx <= 720):
+                        self.static_obstacles.append(FactoryStructure(wx, by_max, 120, 120))
+                        
+                # Draw left and right walls
+                for wy in range(by_min + 120, by_max, 120):
+                    self.static_obstacles.append(FactoryStructure(bx_min, wy, 120, 120))
+                    self.static_obstacles.append(FactoryStructure(bx_max, wy, 120, 120))
+            
+            # Regular corridor grid outside of the Core Room
+            cols = [-1800, -1200, -600, 0, 600, 1200, 1800, 2400, 3000]
+            random.seed(int(to_y) // 120)
+            
+            for y_step in range(int(to_y), int(from_y), 120):
+                if abs(y_step - (-3000)) < 600:
+                    continue
+                if y_step > 300:
+                    continue
+                    
+                if y_step % 600 == 0:
+                    # Place a horizontal gate row with some open lanes
+                    open_lanes = [random.randint(0, len(cols)-1), random.randint(0, len(cols)-1)]
+                    for col_idx, cx in enumerate(cols):
+                        if col_idx not in open_lanes:
+                            for wx in [cx - 120, cx, cx + 120]:
+                                if not any(abs(obs.x - wx) < 60 and abs(obs.y - y_step) < 60 for obs in self.static_obstacles):
+                                    self.static_obstacles.append(FactoryStructure(wx, y_step, 120, 120))
+                else:
+                    # Place vertical corridor walls along the column lines
+                    for cx in cols:
+                        if random.random() < 0.65:
+                            if not any(abs(obs.x - cx) < 60 and abs(obs.y - y_step) < 60 for obs in self.static_obstacles):
+                                self.static_obstacles.append(FactoryStructure(cx, y_step, 120, 120))
+            random.seed()
+        else:
+            # Generate static obstacles (asteroids) as player flies up
+            num_obstacles = 12
+            for _ in range(num_obstacles):
+                ox = random.randint(-1800, VIRTUAL_WIDTH + 1800)
+                oy = random.randint(int(to_y), int(from_y))
+                
+                overlap = False
+                for obs in self.static_obstacles:
+                    if pygame.math.Vector2(ox, oy).distance_to(pygame.math.Vector2(obs.x, obs.y)) < 150:
+                        overlap = True
+                if not overlap:
+                    self.static_obstacles.append(Meteor(ox, oy, is_static=True))
 
-        # Spawn Matrix Cores rarely and without limit (20% chance per 1200px chunk generated)
-        if random.random() < 0.20:
+        # Spawn Matrix Cores rarely and without limit (30% chance in early levels, 20% in others)
+        core_chance = 0.30 if self.current_zone in ('ASTEROIDS', 'VULCAN', 'AQUARIS') else 0.20
+        if random.random() < core_chance:
             cx = random.randint(-2500, VIRTUAL_WIDTH + 2500)
             cy = random.randint(int(to_y), int(from_y))
             # Space them out to prevent clusters
@@ -1614,6 +3538,23 @@ class Game:
             if not overlap:
                 self.materials.append(Material(cx, cy))
                 self.materials_spawned_count += 1
+
+        theme_color = BIOME_CONFIGS.get(self.current_zone, {}).get('theme_color', PURPLE)
+        for _ in range(random.randint(3, 5)):
+            gx = random.randint(-500, VIRTUAL_WIDTH + 500)
+            gy = random.randint(int(to_y), int(from_y))
+            self.gas_clouds.append(GasCloud(gx, gy, theme_color))
+            
+        num_derelicts = random.randint(1, 3) if self.current_zone in ('ASTEROIDS', 'VULCAN', 'AQUARIS') else random.randint(0, 2)
+        for _ in range(num_derelicts):
+            dx = random.randint(-1500, VIRTUAL_WIDTH + 1500)
+            dy = random.randint(int(to_y), int(from_y))
+            self.derelicts.append(DerelictHull(dx, dy))
+            
+        if random.random() < 0.6:  # 60% chance per chunk
+            ax = random.randint(-1500, VIRTUAL_WIDTH + 1500)
+            ay = random.randint(int(to_y), int(from_y))
+            self.anomalies.append(Anomaly(ax, ay))
                 
         # Spawn level-specific gimmicks
         if self.current_zone == 'AQUARIS':
@@ -1627,16 +3568,37 @@ class Game:
                 gy = random.randint(int(to_y), int(from_y))
                 self.gravity_wells.append(GravityWell(gx, gy))
 
+        # Spawn Data Uplink terminals in starting levels
+        if self.current_zone in ('ASTEROIDS', 'VULCAN', 'AQUARIS'):
+            if random.random() < 0.35:
+                dx = random.randint(-1500, VIRTUAL_WIDTH + 1500)
+                dy = random.randint(int(to_y), int(from_y))
+                self.data_uplinks.append(DataUplink(dx, dy))
+
+        # Spawn small bypass portals with a 15% chance per chunk
+        if random.random() < 0.15:
+            px = random.randint(200, VIRTUAL_WIDTH - 200)
+            py = random.randint(int(to_y), int(from_y))
+            self.small_portals.append(SmallPortal(px, py))
+
     def spawn_explosion(self, x, y, color_palette, count=15):
+        if count >= 10 and SOUNDS:
+            SOUNDS.play('explosion')
         for _ in range(count):
             color = random.choice(color_palette)
             self.particles.append(Particle(x, y, color))
+        if count >= 10:
+            ring_color = color_palette[0] if color_palette else CYAN
+            self.shockwaves.append(ShockwaveRing(x, y, count * 3, ring_color))
         self.screen_shake = min(15, self.screen_shake + int(count * 0.5))
 
     def _damage_player(self, current_time, damage=1):
-        if self.player.is_dead or self.player.invulnerable:
+        if self.player.is_dead or self.player.invulnerable or self.debug_invincible:
             return
+        if SOUNDS: SOUNDS.play('hit')
         
+        if self.player.shields > 0:
+            self.player.shield_bubble_timer = current_time
         self.player.shields -= damage
         self.player.last_hit_time = current_time
         self.player.last_regen_time = current_time
@@ -1652,6 +3614,47 @@ class Game:
             self.player_death_timer = 90
             self.player.invulnerable = False
 
+    def detonate_anomaly(self, anomaly):
+        if anomaly in self.anomalies: self.anomalies.remove(anomaly)
+        self.spawn_explosion(anomaly.x, anomaly.y, [(255, 0, 255), (0, 255, 255), (255, 255, 255)], 60)
+        self.screen_shake = max(self.screen_shake, 35)
+        radius = 160 # Reduced from 350
+        anomaly_pos = pygame.math.Vector2(anomaly.x, anomaly.y)
+        
+        for enemy in self.enemies[:]:
+            if anomaly_pos.distance_to(pygame.math.Vector2(enemy.rect.center)) < radius:
+                enemy.health -= 20
+                if enemy.health <= 0: self._kill_enemy(enemy)
+                
+        for meteor in self.meteors[:]:
+            if anomaly_pos.distance_to(pygame.math.Vector2(meteor.rect.center)) < radius:
+                self._destroy_meteor(meteor)
+                
+        for obs in self.static_obstacles[:]:
+            if anomaly_pos.distance_to(pygame.math.Vector2(obs.rect.center)) < radius:
+                if obs in self.static_obstacles: self.static_obstacles.remove(obs)
+                self.spawn_explosion(obs.rect.centerx, obs.rect.centery, [(128, 128, 128)], 10)
+                
+        for d in self.derelicts[:]:
+            if anomaly_pos.distance_to(pygame.math.Vector2(d.rect.center)) < radius:
+                d.health = 0
+                self.spawn_explosion(d.x, d.y, [(200, 100, 50), (100, 50, 20)], 20)
+                for _ in range(random.randint(5, 10)):
+                    self.scraps.append(Scrap(d.x + random.randint(-20, 20), d.y + random.randint(-20, 20)))
+                if d in self.derelicts: self.derelicts.remove(d)
+                
+        for eb in self.enemy_bullets[:]:
+            if anomaly_pos.distance_to(pygame.math.Vector2(eb.x, eb.y)) < radius:
+                if eb in self.enemy_bullets: self.enemy_bullets.remove(eb)
+
+        if anomaly_pos.distance_to(pygame.math.Vector2(self.player.rect.center)) < radius:
+            self._damage_player(pygame.time.get_ticks(), damage=4)
+            
+        # Chain reaction
+        for a in self.anomalies[:]:
+            if anomaly_pos.distance_to(pygame.math.Vector2(a.rect.center)) < radius:
+                self.detonate_anomaly(a)
+
     def _handle_events(self):
         global SCREEN_WIDTH, SCREEN_HEIGHT
         current_time = pygame.time.get_ticks()
@@ -1662,6 +3665,29 @@ class Game:
             elif event.type == pygame.VIDEORESIZE:
                 SCREEN_WIDTH, SCREEN_HEIGHT = event.w, event.h
                 self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
+                self._update_scaling()
+            
+            elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                self.dragging_volume = False
+                self.dragging_tint = False
+                self.dragging_vignette = False
+                self.dragging_softness = False
+                
+            elif event.type == pygame.MOUSEMOTION:
+                mx, my = event.pos
+                vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
+                if self.dragging_volume and SOUNDS:
+                    val = max(0.0, min(1.0, (vmx - 980) / 150.0))
+                    SOUNDS.set_global_volume(val)
+                elif self.dragging_tint:
+                    val = max(0.0, min(1.0, (vmx - 980) / 150.0))
+                    self.filter_tint_alpha = int(val * 150)
+                elif self.dragging_vignette:
+                    val = max(0.0, min(1.0, (vmx - 980) / 150.0))
+                    self.filter_vignette_alpha = int(val * 200)
+                elif self.dragging_softness:
+                    val = max(0.0, min(1.0, (vmx - 980) / 150.0))
+                    self.filter_softness = int(val * 60)
             
             if event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
                 mx, my = event.pos
@@ -1669,23 +3695,116 @@ class Game:
                 vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
                 vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
                 
+                # Sliders checks
+                if self.state in ('MAIN_MENU', 'CLASS_SELECT', 'PAUSED'):
+                    # Volume slider
+                    if SOUNDS:
+                        slider_rect = pygame.Rect(980 - 15, 25, 150 + 30, 45)
+                        if slider_rect.collidepoint(vmx, vmy):
+                            self.dragging_volume = True
+                            val = max(0.0, min(1.0, (vmx - 980) / 150.0))
+                            SOUNDS.set_global_volume(val)
+                    
+                    # Tint slider (y=110)
+                    tint_rect = pygame.Rect(980 - 15, 90, 150 + 30, 45)
+                    if tint_rect.collidepoint(vmx, vmy):
+                        self.dragging_tint = True
+                        val = max(0.0, min(1.0, (vmx - 980) / 150.0))
+                        self.filter_tint_alpha = int(val * 150)
+                        
+                    # Vignette slider (y=175)
+                    vignette_rect = pygame.Rect(980 - 15, 155, 150 + 30, 45)
+                    if vignette_rect.collidepoint(vmx, vmy):
+                        self.dragging_vignette = True
+                        val = max(0.0, min(1.0, (vmx - 980) / 150.0))
+                        self.filter_vignette_alpha = int(val * 200)
+                        
+                    # Softness slider (y=240)
+                    softness_rect = pygame.Rect(980 - 15, 220, 150 + 30, 45)
+                    if softness_rect.collidepoint(vmx, vmy):
+                        self.dragging_softness = True
+                        val = max(0.0, min(1.0, (vmx - 980) / 150.0))
+                        self.filter_softness = int(val * 60)
+                
+                # Main Menu input box and Continue button click
+                if self.state == 'MAIN_MENU':
+                    input_box_rect = pygame.Rect(VIRTUAL_WIDTH // 2 - 200, 350, 400, 50)
+                    continue_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 100, 430, 200, 50)
+                    if input_box_rect.collidepoint(vmx, vmy):
+                        self.input_active = True
+                    elif continue_btn.collidepoint(vmx, vmy):
+                        self.player_name = self.player_name.strip()
+                        if self.player_name == "":
+                            self.player_name = "CAPTAIN"
+                        self.input_active = False
+                        self.player.name = self.player_name
+                        self.state = 'CLASS_SELECT'
+                    else:
+                        self.input_active = False
+                        
+                elif self.state == 'CLASS_SELECT':
+                    classes = ['RANGER', 'ENGINEER', 'VANGUARD', 'SNIPER', 'ASSASSIN']
+                    for idx, cls in enumerate(classes):
+                        btn_rect = pygame.Rect(100 + idx * 200, 220, 180, 50)
+                        if btn_rect.collidepoint(vmx, vmy):
+                            self.selected_class = cls
+                            self.player.set_class(self.selected_class)
+                            
+                    launch_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 150, 740, 300, 60)
+                    if launch_btn.collidepoint(vmx, vmy):
+                        self.reset_game()
+                        self.player.name = self.player_name.strip() if self.player_name.strip() else "CAPTAIN"
+                        self.player.set_class(self.selected_class)
+                        self.state = 'HUB'
+                        self.current_zone = 'HUB'
+
                 # Upgrade Shop clicks (only permitted in the Hub)
                 if self.state == 'PAUSED' and self.current_zone == 'HUB':
+                    # Weapon Selection logic
+                    # Primary selection
+                    for i in range(3):
+                        rect = pygame.Rect(100 + i * 140, 520, 130, 50)
+                        if rect.collidepoint(vmx, vmy):
+                            if i == 0 or (i == 1 and self.player.skills['shotgun_unlocked']) or (i == 2 and self.player.skills['railgun_unlocked']):
+                                self.player.active_primary = i
+                    
+                    # Secondary selection
+                    for i in range(3):
+                        rect = pygame.Rect(100 + i * 140, 680, 130, 50)
+                        if rect.collidepoint(vmx, vmy):
+                            if i == 0 or (i == 1 and self.player.skills['bomb_unlocked']) or (i == 2 and self.player.skills['missile_unlocked']):
+                                self.player.active_secondary = i
+
+                if self.state == 'PAUSED' and self.current_zone == 'HUB' and self.hub_station_active in ('ENGINEERING', 'WEAPONRY'):
                     nodes_data = {
-                        'shield': {'max_level': 4, 'cost_func': lambda p: (p.skills['shield'] + 1) * 75, 'scrap_cost_func': lambda p: (p.skills['shield'] + 1) * 2, 'deps': [], 'col': 1, 'row': 1},
-                        'deflector': {'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 5, 'deps': [('shield', 2)], 'col': 2, 'row': 1},
-                        'coolant': {'max_level': 4, 'cost_func': lambda p: (p.skills['coolant'] + 1) * 60, 'scrap_cost_func': lambda p: (p.skills['coolant'] + 1) * 2, 'deps': [], 'col': 1, 'row': 2},
-                        'weapon': {'max_level': 2, 'cost_func': lambda p: 200 if p.skills['weapon'] == 0 else 400, 'scrap_cost_func': lambda p: 8 if p.skills['weapon'] == 0 else 15, 'deps': [('coolant', 1)], 'col': 2, 'row': 2},
-                        'overcharge': {'max_level': 1, 'cost_func': lambda p: 250, 'scrap_cost_func': lambda p: 8, 'deps': [('weapon', 1)], 'col': 3, 'row': 2},
-                        'torpedo': {'max_level': 4, 'cost_func': lambda p: (p.skills['torpedo'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['torpedo'] + 1) * 2, 'deps': [], 'col': 1, 'row': 3},
-                        'cluster_torpedo': {'max_level': 1, 'cost_func': lambda p: 300, 'scrap_cost_func': lambda p: 10, 'deps': [('torpedo', 2)], 'col': 2, 'row': 3},
-                        'hyperdrive': {'max_level': 1, 'cost_func': lambda p: 350, 'scrap_cost_func': lambda p: 12, 'deps': [('shield', 2), ('coolant', 2)], 'col': 1, 'row': 4}
+                        'shield': {'max_level': 4, 'cost_func': lambda p: (p.skills['shield'] + 1) * 75, 'scrap_cost_func': lambda p: (p.skills['shield'] + 1) * 1, 'deps': [], 'col': 1, 'row': 1, 'type': 'ENGINEERING'},
+                        'deflector': {'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 3, 'deps': [('shield', 2)], 'col': 1, 'row': 2, 'type': 'ENGINEERING'},
+                        'coolant': {'max_level': 4, 'cost_func': lambda p: (p.skills['coolant'] + 1) * 60, 'scrap_cost_func': lambda p: (p.skills['coolant'] + 1) * 1, 'deps': [], 'col': 2, 'row': 1, 'type': 'ENGINEERING'},
+                        'hyperdrive': {'max_level': 1, 'cost_func': lambda p: 350, 'scrap_cost_func': lambda p: 6, 'deps': [('shield', 2), ('coolant', 2)], 'col': 2, 'row': 2, 'type': 'ENGINEERING'},
+                        'class_tier1': {'max_level': 3, 'cost_func': lambda p: (p.skills['class_tier1'] + 1) * 120, 'scrap_cost_func': lambda p: (p.skills['class_tier1'] + 1) * 2, 'deps': [], 'col': 3, 'row': 1, 'type': 'ENGINEERING'},
+                        'class_tier2': {'max_level': 2, 'cost_func': lambda p: (p.skills['class_tier2'] + 1) * 180, 'scrap_cost_func': lambda p: (p.skills['class_tier2'] + 1) * 3, 'deps': [('class_tier1', 1)], 'col': 3, 'row': 2, 'type': 'ENGINEERING'},
+                        'class_tier3': {'max_level': 1, 'cost_func': lambda p: 350, 'scrap_cost_func': lambda p: 5, 'deps': [('class_tier2', 1)], 'col': 3, 'row': 3, 'type': 'ENGINEERING'},
+
+                        'weapon': {'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 4, 'deps': [], 'col': 1, 'row': 1, 'type': 'WEAPONRY'},
+                        'overcharge': {'max_level': 1, 'cost_func': lambda p: 250, 'scrap_cost_func': lambda p: 4, 'deps': [('weapon', 1)], 'col': 1, 'row': 2, 'type': 'WEAPONRY'},
+                        'shotgun_unlocked': {'max_level': 1, 'cost_func': lambda p: 300, 'scrap_cost_func': lambda p: 5, 'deps': [], 'col': 1, 'row': 3, 'type': 'WEAPONRY'},
+                        'shotgun_mod': {'max_level': 3, 'cost_func': lambda p: (p.skills['shotgun_mod'] + 1) * 100, 'scrap_cost_func': lambda p: (p.skills['shotgun_mod'] + 1) * 2, 'deps': [('shotgun_unlocked', 1)], 'col': 1, 'row': 4, 'type': 'WEAPONRY'},
+                        'railgun_unlocked': {'max_level': 1, 'cost_func': lambda p: 500, 'scrap_cost_func': lambda p: 10, 'deps': [], 'col': 2, 'row': 1, 'type': 'WEAPONRY'},
+                        'railgun_mod': {'max_level': 3, 'cost_func': lambda p: (p.skills['railgun_mod'] + 1) * 150, 'scrap_cost_func': lambda p: (p.skills['railgun_mod'] + 1) * 4, 'deps': [('railgun_unlocked', 1)], 'col': 2, 'row': 2, 'type': 'WEAPONRY'},
+                        'torpedo': {'max_level': 4, 'cost_func': lambda p: (p.skills['torpedo'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['torpedo'] + 1) * 1, 'deps': [], 'col': 2, 'row': 3, 'type': 'WEAPONRY'},
+                        'cluster_torpedo': {'max_level': 1, 'cost_func': lambda p: 300, 'scrap_cost_func': lambda p: 5, 'deps': [('torpedo', 2)], 'col': 2, 'row': 4, 'type': 'WEAPONRY'},
+                        'bomb_unlocked': {'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 3, 'deps': [], 'col': 3, 'row': 1, 'type': 'WEAPONRY'},
+                        'bomb_cap': {'max_level': 3, 'cost_func': lambda p: (p.skills['bomb_cap'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['bomb_cap'] + 1) * 2, 'deps': [('bomb_unlocked', 1)], 'col': 3, 'row': 2, 'type': 'WEAPONRY'},
+                        'missile_unlocked': {'max_level': 1, 'cost_func': lambda p: 400, 'scrap_cost_func': lambda p: 7, 'deps': [], 'col': 3, 'row': 3, 'type': 'WEAPONRY'},
+                        'missile_cap': {'max_level': 3, 'cost_func': lambda p: (p.skills['missile_cap'] + 1) * 120, 'scrap_cost_func': lambda p: (p.skills['missile_cap'] + 1) * 3, 'deps': [('missile_unlocked', 1)], 'col': 3, 'row': 4, 'type': 'WEAPONRY'}
                     }
                     
                     for key, node in nodes_data.items():
+                        if node['type'] != self.hub_station_active:
+                            continue
                         node_x = 630 + (node['col'] - 1) * 180
-                        node_y = 210 + (node['row'] - 1) * 100
-                        rect = pygame.Rect(node_x, node_y, 160, 80)
+                        node_y = 210 + (node['row'] - 1) * 90
+                        rect = pygame.Rect(node_x, node_y, 160, 75)
                         
                         if rect.collidepoint(vmx, vmy):
                             unlocked = True
@@ -1706,11 +3825,116 @@ class Game:
                                     if key == 'shield':
                                         self.player.max_shields = 3 + self.player.skills['shield']
                                         self.player.shields = self.player.max_shields
+                                    # Re-apply class stats to calculate new upgrades dynamically
+                                    self.player.set_class(self.player.class_name)
+                
+                if self.state == 'PAUSED' and self.current_zone == 'HUB' and self.hub_station_active == 'SUPPLY':
+                    items = [
+                        ('Shield Repair', 75),
+                        ('Torpedo Refill', 100),
+                        ('Bomb Refill', 150),
+                        ('Missile Refill', 200),
+                        ('Flare Refill', 50),
+                        ('Mod: Piercing Rounds', 300),
+                        ('Mod: Split Shot', 400),
+                        ('Mod: Shield Siphon', 350)
+                    ]
+                    for i, (name, cost) in enumerate(items):
+                        rect = pygame.Rect(650, 210 + i * 80, 480, 68)
+                        if rect.collidepoint(vmx, vmy):
+                            if self.player.credits >= cost:
+                                if i == 0: # Shield Repair
+                                    if self.player.shields < self.player.max_shields:
+                                        self.player.credits -= cost
+                                        self.player.shields = min(self.player.max_shields, self.player.shields + 1)
+                                elif i == 1: # Torpedo Refill
+                                    if self.player.torpedo_ammo < self.player.max_torpedo_ammo:
+                                        self.player.credits -= cost
+                                        self.player.torpedo_ammo = self.player.max_torpedo_ammo
+                                elif i == 2: # Bomb Refill
+                                    if self.player.bomb_ammo < self.player.max_bomb_ammo:
+                                        self.player.credits -= cost
+                                        self.player.bomb_ammo = self.player.max_bomb_ammo
+                                elif i == 3: # Missile Refill
+                                    if self.player.missile_ammo < self.player.max_missile_ammo:
+                                        self.player.credits -= cost
+                                        self.player.missile_ammo = self.player.max_missile_ammo
+                                elif i == 4: # Flare Refill
+                                    if self.player.flare_ammo < self.player.max_flare_ammo:
+                                        self.player.credits -= cost
+                                        self.player.flare_ammo = self.player.max_flare_ammo
+                                elif i == 5: # Mod Piercing
+                                    if not self.player.has_mod_piercing:
+                                        self.player.credits -= cost
+                                        self.player.has_mod_piercing = True
+                                elif i == 6: # Mod Split Shot
+                                    if not self.player.has_mod_split:
+                                        self.player.credits -= cost
+                                        self.player.has_mod_split = True
+                                elif i == 7: # Mod Siphon
+                                    if not self.player.has_mod_siphon:
+                                        self.player.credits -= cost
+                                        self.player.has_mod_siphon = True
 
             if event.type == pygame.KEYDOWN:
+                if event.key == pygame.K_t:
+                    self.debug_invincible = not self.debug_invincible
+                    if self.debug_invincible:
+                        self.player.credits += 1000000
+                        self.player.scraps += 10000
+
+                if event.key == pygame.K_v:
+                    self.victory_start_time = pygame.time.get_ticks()
+                    self.escape_sequence_active = False
+                    self.boss_defeated = False
+                    self.wormhole_spawned = False
+                    self.state = 'VICTORY'
+
+                if event.key == pygame.K_b and self.state == 'PLAYING' and self.current_zone != 'HUB':
+                    self.materials_collected = 5
+                    self.boss = Boss(self.current_zone, self.player.y - 450)
+                    self.enemies = []
+                    self.meteors = []
+                    self.enemy_bullets = []
+
                 if self.state == 'MAIN_MENU':
-                    if event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                    if self.input_active:
+                        if event.key == pygame.K_BACKSPACE:
+                            self.player_name = self.player_name[:-1]
+                        elif event.key == pygame.K_RETURN:
+                            self.player_name = self.player_name.strip()
+                            if self.player_name == "":
+                                self.player_name = "CAPTAIN"
+                            self.input_active = False
+                            self.player.name = self.player_name
+                            self.state = 'CLASS_SELECT'
+                        elif len(self.player_name) < 24:
+                            self.player_name += event.unicode.upper()
+                    else:
+                        if event.key in (pygame.K_SPACE, pygame.K_RETURN):
+                            self.player_name = self.player_name.strip()
+                            if self.player_name == "":
+                                self.player_name = "CAPTAIN"
+                            self.player.name = self.player_name
+                            self.state = 'CLASS_SELECT'
+                            
+                elif self.state == 'CLASS_SELECT':
+                    if event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5):
+                        if event.key == pygame.K_1:
+                            self.selected_class = 'RANGER'
+                        elif event.key == pygame.K_2:
+                            self.selected_class = 'ENGINEER'
+                        elif event.key == pygame.K_3:
+                            self.selected_class = 'VANGUARD'
+                        elif event.key == pygame.K_4:
+                            self.selected_class = 'SNIPER'
+                        elif event.key == pygame.K_5:
+                            self.selected_class = 'ASSASSIN'
+                        self.player.set_class(self.selected_class)
+                    elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
                         self.reset_game()
+                        self.player.name = self.player_name.strip() if self.player_name.strip() else "CAPTAIN"
+                        self.player.set_class(self.selected_class)
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                 
@@ -1771,6 +3995,7 @@ class Game:
                         self.current_zone = 'HUB'
                     elif event.key == pygame.K_m:
                         self.state = 'MAIN_MENU'
+                        self.input_active = True
                         
                 elif self.state == 'VICTORY':
                     if event.key == pygame.K_r:
@@ -1779,10 +4004,28 @@ class Game:
                         self.current_zone = 'HUB'
                     elif event.key == pygame.K_m:
                         self.state = 'MAIN_MENU'
+                        self.input_active = True
 
     def _update(self):
         current_time = pygame.time.get_ticks()
+        self.zoom_level = 1.0
         
+        # Dynamic Music crossfade
+        if SOUNDS and SOUNDS.enabled:
+            wants_boss_music = False
+            if self.state in ('PLAYING', 'PAUSED'):
+                if (getattr(self, 'boss', None) and not self.boss.is_dead) or (self.player.shields <= self.player.max_shields * 0.3):
+                    wants_boss_music = True
+            SOUNDS.update_music(wants_boss_music)
+        
+        # Intro sequence processing
+        if self.state == 'INTRO':
+            intro_time = current_time - getattr(self, 'intro_start_time', 0)
+            if intro_time > 5500:
+                self.state = 'MAIN_MENU'
+                self.input_active = True
+            return  # Skip updating game objects during intro
+            
         # Player Death sequence processing
         if getattr(self, 'player_death_timer', 0) > 0:
             self.player_death_timer -= 1
@@ -1795,10 +4038,12 @@ class Game:
                 self.player.credits = max(0, self.player.credits - 50)
                 self.player.shields = self.player.max_shields
                 self.player.heat = 0
+                self.player.name = self.player_name.strip() # Ensure player name is set on reset
                 self.player.overheated = False
                 self.player.is_dead = False
                 
                 self.state = 'GAME_OVER'
+                self.game_over_start_time = current_time
                 self.current_zone = 'HUB'
                 self.player.x = VIRTUAL_WIDTH // 2 - self.player.width // 2
                 self.player.y = VIRTUAL_HEIGHT // 2 + 100
@@ -1807,6 +4052,9 @@ class Game:
                 self.enemies = []
                 self.meteors = []
                 self.stars_color = WHITE
+                self.boss_defeated = False
+                self.wormhole_spawned = False
+                self.escape_sequence_active = False
 
         for star in self.stars:
             star[1] += star[2] * 2.0
@@ -1835,11 +4083,33 @@ class Game:
             if particle.life <= 0:
                 self.particles.remove(particle)
 
+        for sw in self.shockwaves[:]:
+            if not sw.update():
+                self.shockwaves.remove(sw)
+
+        for loot in self.loot_pickups[:]:
+            loot.update()
+            if not self.player.is_dead and self.player.rect.colliderect(loot.rect):
+                if SOUNDS: SOUNDS.play('collect')
+                self.player.apply_loot(loot)
+                self.loot_pickups.remove(loot)
+                self.spawn_explosion(loot.x, loot.y, [(255, 215, 0), (255, 255, 255)], 10)
+            elif loot.y < self.camera_y - 200:
+                self.loot_pickups.remove(loot)
+
         for obs in self.static_obstacles:
             obs.update()
 
         if self.state in ('PLAYING', 'HUB'):
             self.player.update_regen(current_time)
+            
+            # Spawn engine trail particles
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_UP] or keys[pygame.K_w] or self.player.velocity.length() > 0.5:
+                rear_x = self.player.x + self.player.width // 2 - self.player.direction.x * 15
+                rear_y = self.player.y + self.player.height // 2 - self.player.direction.y * 15
+                self.particles.append(EngineTrailParticle(rear_x, rear_y, self.player.direction, self.player.class_name))
+
             max_sp = self.player.max_speed * self.player.speed_multiplier
             if self.player.velocity.length() > max_sp * 1.05:
                 px = self.player.x + self.player.width // 2
@@ -1848,15 +4118,18 @@ class Game:
 
         # ---------------- HUB STATE ----------------
         if self.state == 'HUB':
-            scale_info = (self.offset_x, self.offset_y, self.new_width, self.new_height)
-            self.player.handle_input(current_time, camera_y=0, scale_info=scale_info, camera_x=0, is_hub=True, limit_y=True)
+            self.player.handle_input(current_time, camera_y=0, scale_info=(self.offset_x, self.offset_y, self.new_width, self.new_height), camera_x=0, is_hub=True, limit_y=True)
             player_vec = pygame.math.Vector2(self.player.rect.center)
             
-            # Dock Upgrade station
-            station_center = pygame.math.Vector2(600, 450)
-            if player_vec.distance_to(station_center) < 120:
-                self.player.shields = self.player.max_shields
-                
+            # Hub Station Detection
+            self.hub_station_active = None
+            if player_vec.distance_to(pygame.math.Vector2(300, 450)) < 150:
+                self.hub_station_active = 'ENGINEERING'
+            elif player_vec.distance_to(pygame.math.Vector2(600, 450)) < 150:
+                self.hub_station_active = 'WEAPONRY'
+            elif player_vec.distance_to(pygame.math.Vector2(900, 450)) < 150:
+                self.hub_station_active = 'SUPPLY'
+
             # Check Cheat Portals collisions
             cheat_zones = ['ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'VOID', 'QUANTUM', 'SINGULARITY', 'ORION']
             for i, zone in enumerate(cheat_zones):
@@ -1873,6 +4146,7 @@ class Game:
                 
             # Warp Gates with Stay Timer based on active hub index
             active_portal = None
+            portal_pos_vec = None
             for zone, cfg in BIOME_CONFIGS.items():
                 if cfg['hub'] == self.current_hub_index and self.unlocked_zones.get(zone, False):
                     order = cfg['order']
@@ -1885,15 +4159,36 @@ class Game:
                         
                     if player_vec.distance_to(portal_pos) < 60:
                         active_portal = zone
+                        portal_pos_vec = portal_pos
                         break
                 
             if active_portal:
+                if self.wormhole_charge_timer == 0 and SOUNDS: SOUNDS.play('warp')
                 dt = self.clock.get_time()
                 self.wormhole_charge_timer += dt
                 self.active_hub_portal = active_portal
                 
                 target_charge = 1000 if self.player.skills.get('hyperdrive', 0) > 0 else 3000
+                
+                # Vacuum and Zoom Effect
+                charge_pct = min(1.0, self.wormhole_charge_timer / target_charge)
+                self.zoom_level = 1.0 + charge_pct * 0.6
+                
+                # Pull player towards center
+                to_portal = (portal_pos_vec - player_vec)
+                if to_portal.length() > 2:
+                    pull = to_portal.normalize() * (charge_pct * 5.5)
+                    self.player.x += pull.x
+                    self.player.y += pull.y
+                    self.player.rect.x = int(self.player.x)
+                    self.player.rect.y = int(self.player.y)
+                    self.player.velocity *= (1.0 - charge_pct * 0.12) # Gravity friction
+                
+                if random.random() < 0.25:
+                    self.particles.append(Particle(portal_pos_vec.x + random.randint(-120, 120), portal_pos_vec.y + random.randint(-120, 120), WHITE))
+
                 if self.wormhole_charge_timer >= target_charge:
+                    self.zoom_level = 1.0
                     self.setup_exploration_zone(active_portal)
                     self.wormhole_charge_timer = 0
                     self.active_hub_portal = None
@@ -1907,9 +4202,43 @@ class Game:
         if self.state != 'PLAYING':
             return
 
-        # Camera dynamic tracking
-        self.camera_y = self.player.y - VIRTUAL_HEIGHT // 2
-        self.camera_x = self.player.x - VIRTUAL_WIDTH // 2
+        # Sector Collapse Environmental Damage
+        if getattr(self, 'boss_defeated', False) and self.wormhole_spawned:
+            # Give a few seconds of grace before sector collapse damage begins
+            if current_time - getattr(self, 'boss_defeated_time', 0) > 3000:
+                player_vec = pygame.math.Vector2(self.player.rect.center)
+                if player_vec.distance_to(self.wormhole_pos) >= 100:
+                    self.screen_shake = max(self.screen_shake, 2)
+                    self.player.shields -= 0.01  # Slower drain: ~0.6 shield segments per second
+                    if self.player.shields < 0 and not self.player.is_dead:
+                        self.player.is_dead = True
+                        self.player_death_timer = 90
+
+        # Global Biome Physics Gimmicks
+        if self.current_zone == 'VOID':
+            self.player.drag = 0.99  # Less friction in the abyss
+        else:
+            self.player.drag = 0.96  # Standard drag
+
+        # Screen shake from speed tamer (shake intensity based on velocity)
+        speed_ratio = self.player.velocity.length() / self.player.max_speed
+        if speed_ratio > 0.85:
+            self.screen_shake = max(self.screen_shake, int((speed_ratio - 0.85) * 12))
+            self.screen_shake = max(self.screen_shake, int((speed_ratio - 0.85) * 6))
+
+        # Camera dynamic tracking with follow inertia and velocity-based look-ahead sway
+        target_cam_y = self.player.y - VIRTUAL_HEIGHT // 2 + self.player.velocity.y * 8
+        target_cam_x = self.player.x - VIRTUAL_WIDTH // 2 + self.player.velocity.x * 8
+        
+        # Prevent camera sliding behavior when player wraps horizontally
+        map_width = VIRTUAL_WIDTH + 4000
+        if target_cam_x - self.camera_x > map_width // 2:
+            self.camera_x += map_width
+        elif target_cam_x - self.camera_x < -map_width // 2:
+            self.camera_x -= map_width
+            
+        self.camera_y += (target_cam_y - self.camera_y) * 0.08
+        self.camera_x += (target_cam_x - self.camera_x) * 0.08
 
         # Procedural surroundings generation on-the-fly!
         # Every time player advances 1000px up, generate next block
@@ -1917,10 +4246,7 @@ class Game:
             self._procedurally_generate_chunk(self.highest_y_generated, self.highest_y_generated - 1200)
             self.highest_y_generated -= 1200
 
-        # Memory Cleanup: De-spawn static asteroids that are far below camera viewport
-        for obs in self.static_obstacles[:]:
-            if obs.y > self.camera_y + VIRTUAL_HEIGHT + 400:
-                self.static_obstacles.remove(obs)
+
 
         # Trigger Boss spawn once player has collected 5 matrix cores
         if self.materials_collected >= 5 and not self.wormhole_spawned and self.boss is None:
@@ -1933,9 +4259,29 @@ class Game:
         if self.wormhole_spawned:
             player_vec = pygame.math.Vector2(self.player.rect.center)
             if player_vec.distance_to(self.wormhole_pos) < 60:
+                if self.wormhole_charge_timer == 0 and SOUNDS: SOUNDS.play('warp')
                 dt = self.clock.get_time()
                 self.wormhole_charge_timer += dt
+                
                 target_charge = 1000 if self.player.skills.get('hyperdrive', 0) > 0 else 3000
+                
+                # Vacuum and Zoom Effect
+                charge_pct = min(1.0, self.wormhole_charge_timer / target_charge)
+                self.zoom_level = 1.0 + charge_pct * 0.6
+                
+                # Pull player towards center
+                to_portal = (self.wormhole_pos - player_vec)
+                if to_portal.length() > 2:
+                    pull = to_portal.normalize() * (charge_pct * 5.5)
+                    self.player.x += pull.x
+                    self.player.y += pull.y
+                    self.player.rect.x = int(self.player.x)
+                    self.player.rect.y = int(self.player.y)
+                    self.player.velocity *= (1.0 - charge_pct * 0.12)
+                
+                if random.random() < 0.25:
+                    self.particles.append(Particle(self.wormhole_pos.x + random.randint(-120, 120), self.wormhole_pos.y + random.randint(-120, 120), WHITE))
+
                 if self.wormhole_charge_timer >= target_charge:
                     # WORMHOLE WARP: Complete exploration and earn Credits
                     self.player.add_credits(250)
@@ -1943,41 +4289,52 @@ class Game:
                     # Open-world Exploration progression: Asteroids -> Vulcan -> Aquaris -> Nebula -> Plasma -> Void -> Quantum -> Singularity -> Orion
                     if self.current_zone == 'ASTEROIDS':
                         self.unlocked_zones['VULCAN'] = True
+                        self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                     elif self.current_zone == 'VULCAN':
                         self.unlocked_zones['AQUARIS'] = True
+                        self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                     elif self.current_zone == 'AQUARIS':
                         self.unlocked_zones['NEBULA'] = True
                         self.current_hub_index = 2
+                        self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                     elif self.current_zone == 'NEBULA':
                         self.unlocked_zones['PLASMA'] = True
+                        self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                     elif self.current_zone == 'PLASMA':
                         self.unlocked_zones['VOID'] = True
+                        self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                     elif self.current_zone == 'VOID':
                         self.unlocked_zones['QUANTUM'] = True
                         self.current_hub_index = 3
+                        self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                     elif self.current_zone == 'QUANTUM':
                         self.unlocked_zones['SINGULARITY'] = True
+                        self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                     elif self.current_zone == 'SINGULARITY':
                         self.unlocked_zones['ORION'] = True
+                        self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                     elif self.current_zone == 'ORION':
+                        self.victory_start_time = pygame.time.get_ticks()
+                        self.escape_sequence_active = False
                         self.state = 'VICTORY'
                     else:
+                        self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                         
@@ -1989,97 +4346,238 @@ class Game:
                     self.meteors = []
                     self.stars_color = WHITE
                     self.wormhole_charge_timer = 0
+                    self.boss_defeated = False
+                    self.wormhole_spawned = False
+                    self.zoom_level = 1.0
                     return
             else:
                 self.wormhole_charge_timer = 0
 
+        # Update Singularity Escape sequence
+        if getattr(self, 'escape_sequence_active', False):
+            # Grow black hole radius
+            self.escape_blackhole_radius = min(1400.0, self.escape_blackhole_radius + 1.2)
+            
+            # Singularity escape sequence gravity pull
+            core_pos = self.escape_blackhole_pos
+            player_pos = pygame.math.Vector2(self.player.x + self.player.width//2, self.player.y + self.player.height//2)
+            to_bh = core_pos - player_pos
+            dist = to_bh.length()
+            if dist > 0:
+                # Stronger pull based on distance and size of black hole
+                pull_strength = min(6.0, (self.escape_blackhole_radius * 1.5) / max(60.0, dist))
+                self.player.x += to_bh.normalize().x * pull_strength
+                self.player.y += to_bh.normalize().y * pull_strength
+                self.player.rect.x = int(self.player.x)
+                self.player.rect.y = int(self.player.y)
+                
+                # If player touches the event horizon, they take heavy damage
+                event_horizon_r = self.escape_blackhole_radius * 0.45
+                if dist < event_horizon_r:
+                    if current_time % 30 == 0 or random.random() < 0.03:
+                        self._damage_player(current_time, damage=0.5)
+                        self.spawn_explosion(player_pos.x, player_pos.y, [(255, 0, 0), (255, 100, 0)], 10)
+
         scale_info = (self.offset_x, self.offset_y, self.new_width, self.new_height)
-        new_projectiles = self.player.handle_input(current_time, self.camera_y, scale_info, camera_x=self.camera_x, limit_y=False)
+        new_projectiles, new_flares, new_support, new_drones, new_crystals = self.player.handle_input(current_time, self.camera_y, scale_info, camera_x=self.camera_x, limit_y=False)
+        
+        # AABB Collision pushback/sliding against indestructible FactoryStructure walls
+        for obs in self.static_obstacles:
+            if isinstance(obs, FactoryStructure):
+                if self.player.rect.colliderect(obs.rect):
+                    self._damage_player(current_time, damage=0.03) # low tick rate damage
+                    overlap_left = (self.player.x + self.player.width) - obs.rect.left
+                    overlap_right = obs.rect.right - self.player.x
+                    overlap_top = (self.player.y + self.player.height) - obs.rect.top
+                    overlap_bottom = obs.rect.bottom - self.player.y
+                    
+                    min_overlap = min(overlap_left, overlap_right, overlap_top, overlap_bottom)
+                    if min_overlap > 0:
+                        if min_overlap == overlap_left:
+                            self.player.x -= overlap_left
+                            self.player.velocity.x = 0
+                        elif min_overlap == overlap_right:
+                            self.player.x += overlap_right
+                            self.player.velocity.x = 0
+                        elif min_overlap == overlap_top:
+                            self.player.y -= overlap_top
+                            self.player.velocity.y = 0
+                        else:
+                            self.player.y += overlap_bottom
+                            self.player.velocity.y = 0
+                        
+                        self.player.rect.topleft = (self.player.x, self.player.y)
         boss_ents = []
         if self.boss and not self.boss.is_dead:
             boss_ents = [ent for ent in self.boss.sub_bosses if not ent.is_dead]
         for proj in new_projectiles:
             if isinstance(proj, Torpedo):
                 self.torpedoes.append(proj)
+            elif isinstance(proj, ProxBomb):
+                self.bombs.append(proj)
+            elif isinstance(proj, HomingMissile):
+                self.missiles.append(proj)
             else:
                 proj.find_target(self.enemies + boss_ents, self.meteors, self.static_obstacles)
                 self.bullets.append(proj)
+        self.flares.extend(new_flares) # Add new flares
+        self.support_ships.extend(new_support)
+        self.drones.extend(new_drones)
+        self.shield_crystals.extend(new_crystals)
         
         # Check Material Core collections
         for mat in self.materials[:]:
             if not self.player.is_dead and self.player.rect.colliderect(mat.rect):
+                if SOUNDS: SOUNDS.play('collect')
                 self.materials.remove(mat)
                 self.materials_collected += 1
+                self.active_quest.progress = min(self.active_quest.target, self.materials_collected)
                 self.spawn_explosion(mat.x, mat.y, [(255, 165, 0), (128, 0, 128), (255, 255, 255)], 20)
                 self.player.add_credits(50)
+                self.player.award_xp(25)
+                self._update_quests()
 
         # Check Scrap collections
         for scrap in self.scraps[:]:
             if not self.player.is_dead and self.player.rect.colliderect(scrap.rect):
+                if SOUNDS: SOUNDS.play('collect')
                 if scrap in self.scraps:
                     self.scraps.remove(scrap)
                 self.player.scraps += 1
                 self.spawn_explosion(scrap.x, scrap.y, [(255, 215, 0), (255, 255, 255)], 10)
-            elif scrap.y > self.camera_y + VIRTUAL_HEIGHT + 400:
-                if scrap in self.scraps:
-                    self.scraps.remove(scrap)
+                    
+        # ITEM MAGNET SYSTEM
+        if not self.player.is_dead:
+            player_center = pygame.math.Vector2(self.player.x + self.player.width // 2, self.player.y + self.player.height // 2)
+            for collection in (self.scraps, self.materials, self.loot_pickups):
+                for item in collection:
+                    item_pos = pygame.math.Vector2(item.x, item.y)
+                    dist = player_center.distance_to(item_pos)
+                    if dist < 250:
+                        pull = (player_center - item_pos).normalize() * (12.0 * (1.0 - dist / 250.0))
+                        item.x += pull.x
+                        item.y += pull.y
+                        if hasattr(item, 'rect'):
+                            item.rect.center = (int(item.x), int(item.y))
 
-        # Check Solar Radiation zone damage
-        if self.state == 'PLAYING' and (self.player.x < -2000 or self.player.x > VIRTUAL_WIDTH + 2000 - self.player.width):
-            if not self.player.is_dead:
-                px = self.player.x + self.player.width // 2
-                py = self.player.y + self.player.height // 2
-                if random.random() < 0.4:
-                    self.particles.append(Particle(px + random.randint(-15, 15), py + random.randint(-15, 15), (255, 69, 0)))
+        # Update Gas Clouds
+        for gc in self.gas_clouds[:]:
+            pass
+
+        # Update Derelicts
+        for d in self.derelicts[:]:
+            d.update()
+            if not self.player.is_dead and self.player.rect.colliderect(d.rect):
+                # Automatically destroy the scrap box derelicts on collision
+                self.spawn_explosion(d.x, d.y, [(200, 100, 50), (100, 50, 20)], 20)
+                for _ in range(random.randint(5, 10)):
+                    self.scraps.append(Scrap(d.x + random.randint(-20, 20), d.y + random.randint(-20, 20)))
+                if d in self.derelicts: self.derelicts.remove(d)
+
+        # Update Data Uplinks
+        for du in self.data_uplinks[:]:
+            hacked = du.update(self.player)
+            if hacked:
+                self.spawn_explosion(du.x, du.y, [(0, 255, 255), (0, 255, 0), (255, 255, 255)], count=35)
+
+        # Update Anomalies
+        for a in self.anomalies[:]:
+            a.update()
+            if not self.player.is_dead and self.player.rect.colliderect(a.rect):
+                self.detonate_anomaly(a)
                 
-                if not hasattr(self, 'last_radiation_damage'):
-                    self.last_radiation_damage = 0
-                if current_time - self.last_radiation_damage > 1500:
-                    self._damage_player(current_time, damage=1)
-                    self.last_radiation_damage = current_time
+        # Update Ambient Debris (spawn based on player motion)
+        if self.state == 'PLAYING' and self.player.velocity.length() > 0.5:
+            if random.random() < 0.25:
+                mv = self.player.velocity.normalize()
+                # Spawn ahead of the player relative to screen
+                ax = self.camera_x + VIRTUAL_WIDTH/2 + mv.x * (VIRTUAL_WIDTH/2 + 200) + random.randint(-600, 600)
+                ay = self.camera_y + VIRTUAL_HEIGHT/2 + mv.y * (VIRTUAL_HEIGHT/2 + 200) + random.randint(-600, 600)
+                # Move opposite to player travel
+                self.ambient_debris.append(AmbientDebris(ax, ay, -mv.x * 3, -mv.y * 3))
+
+        for ad in self.ambient_debris[:]:
+            ad.update()
+            if ad.y > self.camera_y + VIRTUAL_HEIGHT + 200:
+                self.ambient_debris.remove(ad)
 
         # Spawning parameters
         actual_enemy_delay = self.enemy_spawn_delay
         actual_meteor_delay = self.meteor_spawn_delay
         
         if self.current_zone == 'ASTEROIDS':
-            actual_enemy_delay = 8000
-            actual_meteor_delay = 2000  # Increased delay (rarer asteroids)
+            actual_enemy_delay = 8000 # Default for asteroids
+            actual_meteor_delay = 2000
         elif self.current_zone == 'VULCAN':
-            actual_enemy_delay = 3000
-            actual_meteor_delay = 8000  # Increased delay (rarer asteroids)
+            actual_enemy_delay = 6000 # Slower than before
+            actual_meteor_delay = 8000
+        else: # Slower spawning for all other zones after asteroids/vulcan
+            actual_enemy_delay = 15000 # Significantly less frequent
+            actual_meteor_delay = 10000
             
         if self.boss is None and not self.boss_defeated:
             if current_time - self.enemy_spawn_time > actual_enemy_delay:
-                # 60% chance to spawn from top, 20% from left, 20% from right
+                # Spawning logic: Ensure enemies always appear outside the viewport
                 spawn_roll = random.random()
-                if spawn_roll < 0.6:
-                    spawn_x = random.randint(50, VIRTUAL_WIDTH - 50)
-                    spawn_y = self.camera_y - 50
-                elif spawn_roll < 0.8:
-                    spawn_x = -50
-                    spawn_y = self.camera_y + random.randint(50, VIRTUAL_HEIGHT - 150)
-                else:
-                    spawn_x = VIRTUAL_WIDTH + 50
-                    spawn_y = self.camera_y + random.randint(50, VIRTUAL_HEIGHT - 150)
+                if spawn_roll < 0.6: # Top
+                    spawn_x = int(self.camera_x) + random.randint(-250, VIRTUAL_WIDTH + 250)
+                    spawn_y = self.camera_y - 250
+                elif spawn_roll < 0.8: # Left
+                    spawn_x = self.camera_x - 250
+                    spawn_y = int(self.camera_y) + random.randint(-250, VIRTUAL_HEIGHT + 250)
+                else: # Right
+                    spawn_x = self.camera_x + VIRTUAL_WIDTH + 250
+                    spawn_y = int(self.camera_y) + random.randint(-250, VIRTUAL_HEIGHT + 250)
                 
-                self.enemies.append(Enemy(spawn_x, spawn_y, self.current_zone))
+                roll = random.random()
+                if roll < 0.07: chosen_subtype = 'ELITE' # 7% Rare Miniboss
+                elif roll < 0.25: chosen_subtype = 'HEAVY' # 18% Tanky
+                elif roll < 0.55: chosen_subtype = 'SCOUT' # 30% Ambushing
+                else: chosen_subtype = 'STANDARD' # 45% Standard
+                if self.current_zone == 'VULCAN':
+                    # Reduce chance of ELITE (Pyro Interceptor) in Vulcan
+                    if random.random() < 0.15: # 15% chance for ELITE
+                        chosen_subtype = 'ELITE'
+                    else:
+                        chosen_subtype = random.choice(['STANDARD', 'HEAVY', 'SCOUT']) # 85% chance for others
+                self.enemies.append(Enemy(spawn_x, spawn_y, self.current_zone, chosen_subtype))
                 self.enemy_spawn_time = current_time
                 
             if current_time - self.meteor_spawn_time > actual_meteor_delay:
                 spawn_y = self.camera_y - 50
                 self.meteors.append(Meteor(random.randint(50, VIRTUAL_WIDTH - 50), spawn_y))
                 self.meteor_spawn_time = current_time
+
+        # Update Support Ships
+        for ss in self.support_ships[:]:
+            support_projectiles = ss.update(current_time)
+            for proj in support_projectiles:
+                if isinstance(proj, HomingMissile):
+                    self.missiles.append(proj)
+                else:
+                    self.bullets.append(proj)
+            if ss.life <= 0 or ss.y < self.camera_y - 300:
+                self.support_ships.remove(ss)
         
-        # Increase general spawn delay for meteors outside specific zone parameters
-        self.meteor_spawn_delay = 6000
+        # Update Drones
+        for dr in self.drones[:]:
+            drone_bullets = dr.update(current_time, self.enemies + boss_ents, self.enemy_bullets)
+            for b in drone_bullets:
+                b.find_target(self.enemies + boss_ents + self.enemy_bullets, self.meteors, self.static_obstacles)
+                self.bullets.append(b)
+            if dr.life <= 0:
+                self.drones.remove(dr)
+
+        # Update flares
+        for flare in self.flares[:]:
+            flare.update()
+            if flare.life_timer <= 0 or flare.y < self.camera_y - 200 or flare.y > self.camera_y + VIRTUAL_HEIGHT + 200:
+                self.flares.remove(flare)
+
         
         # Update level shield crystals
         for crystal in self.shield_crystals[:]:
             crystal.update()
-            if crystal.y > self.camera_y + VIRTUAL_HEIGHT + 100:
-                if crystal in self.shield_crystals:
-                    self.shield_crystals.remove(crystal)
 
         # Update level gravity wells
         for gw in self.gravity_wells:
@@ -2101,19 +4599,77 @@ class Game:
                     self.solar_flare_timer = 0
                     player_center_y = self.player.y + self.player.height // 2
                     if self.solar_flare_y <= player_center_y <= self.solar_flare_y + 120:
-                        self._damage_player(current_time)
-                        self.player.heat = self.player.max_heat
-                        self.player.overheated = True
+                        shielded = False
+                        player_center_x = self.player.x + self.player.width // 2
+                        for obs in self.static_obstacles:
+                            if isinstance(obs, FactoryStructure):
+                                if obs.rect.left <= player_center_x <= obs.rect.right and obs.rect.bottom <= self.player.y <= obs.rect.bottom + 300:
+                                    shielded = True
+                                    break
+                        if not shielded:
+                            self._damage_player(current_time)
+                            self.player.heat = self.player.max_heat
+                            self.player.overheated = True
             elif self.solar_flare_state == 'ACTIVE':
                 self.solar_flare_timer += dt
                 player_center_y = self.player.y + self.player.height // 2
                 if self.solar_flare_y <= player_center_y <= self.solar_flare_y + 120:
-                    self._damage_player(current_time)
-                    self.player.heat = self.player.max_heat
-                    self.player.overheated = True
+                    shielded = False
+                    player_center_x = self.player.x + self.player.width // 2
+                    for obs in self.static_obstacles:
+                        if isinstance(obs, FactoryStructure):
+                            if obs.rect.left <= player_center_x <= obs.rect.right and obs.rect.bottom <= self.player.y <= obs.rect.bottom + 300:
+                                    shielded = True
+                                    break
+                    if not shielded:
+                        self._damage_player(current_time)
+                        self.player.heat = self.player.max_heat
+                        self.player.overheated = True
                 if self.solar_flare_timer > 800:
                     self.solar_flare_state = 'IDLE'
                     self.solar_flare_timer = 0
+        
+        # Update Nebula Lightning gimmick
+        if self.current_zone == 'NEBULA':
+            if not hasattr(self, 'lightning_timer'): self.lightning_timer = 0
+            if not hasattr(self, 'lightning_pos'): self.lightning_pos = (0, 0)
+            self.lightning_timer += self.clock.get_time()
+            
+            if self.lightning_timer > 5000: # Strike every 5s
+                self.lightning_timer = 0
+                lx = random.randint(int(self.camera_x), int(self.camera_x + VIRTUAL_WIDTH))
+                self.lightning_pos = (lx, self.camera_y)
+                self.screen_shake = 10
+                # Visual strike
+                self.particles.append(Particle(lx, self.player.y, WHITE))
+                # Damage check
+                if abs(self.player.x + self.player.width//2 - lx) < 60:
+                    self._damage_player(current_time, 2)
+
+        # Update Quantum Glitch gimmick
+        if self.current_zone == 'QUANTUM':
+            if random.random() < 0.01: # 1% chance per frame to glitch
+                self.screen_shake = 5
+                offset = random.randint(-20, 20)
+                self.camera_x += offset
+        
+        # Update Singularity Drift gimmick
+        if self.current_zone == 'SINGULARITY':
+            if self.boss and not self.boss.is_dead:
+                # Pull player toward the reactor core
+                to_core = pygame.math.Vector2(self.boss.x, self.boss.y) - pygame.math.Vector2(self.player.x + self.player.width//2, self.player.y + self.player.height//2)
+                dist = to_core.length()
+                if dist > 0:
+                    pull_force = min(3.5, 450.0 / max(50.0, dist))
+                    self.player.x += to_core.normalize().x * pull_force
+                    self.player.y += to_core.normalize().y * pull_force
+            elif getattr(self, 'escape_sequence_active', False):
+                # Handled separately below in the escape logic
+                pass
+            else:
+                # Global pull downwards before boss spawns
+                self.player.y += 1.2
+                for e in self.enemies: e.y += 0.8
 
         # Update boss
         if self.boss:
@@ -2121,31 +4677,143 @@ class Game:
             if self.boss.is_dead and self.boss.death_timer > 120:
                 for ent in self.boss.sub_bosses:
                     self.spawn_explosion(ent.x, ent.y, [(255, 255, 255), (0, 255, 255), (0, 100, 255)], 40)
-                self.wormhole_pos = pygame.math.Vector2(self.boss.x, self.boss.y)
-                self.wormhole_spawned = True
+                if self.current_zone == 'SINGULARITY':
+                    # Start escape sequence instead of instantly ending
+                    self.escape_sequence_active = True
+                    self.escape_blackhole_pos = pygame.math.Vector2(self.boss.x, self.boss.y)
+                    self.escape_blackhole_radius = 80.0
+                    # Spawn escape wormhole inside the black hole center
+                    self.wormhole_pos = pygame.math.Vector2(self.boss.x + random.randint(-500, 500), self.boss.y - 1800)
+                    self.wormhole_spawned = True
+                    self.boss_defeated = True
+                else:
+                    self.wormhole_pos = pygame.math.Vector2(self.boss.x, self.boss.y)
+                    self.wormhole_spawned = True
+                    self.boss_defeated = True
+                self.boss_defeated_time = current_time
                 self.boss = None
-                self.boss_defeated = True
 
         # Update enemy bullets
+        # Remove bullets that have expired their life_time
         for eb in self.enemy_bullets[:]:
-            eb.update()
+            if eb.life_time > 0 and eb.life_timer <= 0:
+                self.enemy_bullets.remove(eb)
+                self.spawn_explosion(eb.x, eb.y, [(255, 100, 100), (255, 255, 255)], 6) # Explosion on self-detonate
+                continue # Skip further processing for this bullet
+        for eb in self.enemy_bullets[:]:
+            # Apply gravitational pull from other gravity wells
+            if not getattr(eb, 'is_gravity', False):
+                eb_pos = pygame.math.Vector2(eb.x, eb.y)
+                for other_eb in self.enemy_bullets:
+                    if getattr(other_eb, 'is_gravity', False) and other_eb is not eb:
+                        gw = pygame.math.Vector2(other_eb.x, other_eb.y)
+                        dist = eb_pos.distance_to(gw)
+                        if 0 < dist < 450:
+                            to_gw = (gw - eb_pos).normalize()
+                            dir_vec = pygame.math.Vector2(eb.dx, eb.dy).normalize()
+                            dir_vec += to_gw * (450 - dist) * 0.0025 # Median influence
+                            dir_vec = dir_vec.normalize()
+                            eb.dx, eb.dy = dir_vec.x, dir_vec.y
+
+            eb.update(self.flares)
             if eb.y < self.camera_y - 100 or eb.y > self.camera_y + VIRTUAL_HEIGHT + 100:
                 if eb in self.enemy_bullets:
                     self.enemy_bullets.remove(eb)
-            elif not self.player.is_dead and self.player.rect.colliderect(eb.rect):
-                if eb in self.enemy_bullets:
-                    self.enemy_bullets.remove(eb)
-                self._damage_player(current_time, damage=1)
+            else:
+                # Enemy bullets impact with Player, Asteroids, and other Enemies
+                hit = False
+                if not self.player.is_dead and self.player.rect.colliderect(eb.rect):
+                    self._damage_player(current_time, damage=1)
+                    self._damage_player(current_time, damage=0.5)
+                    hit = True
+                
+                if not hit:
+                    for obj in self.meteors + self.static_obstacles:
+                        if eb.rect.colliderect(obj.rect):
+                            hit = True
+                            break
+                
+                if hit:
+                    if eb in self.enemy_bullets: self.enemy_bullets.remove(eb)
+                    self.spawn_explosion(eb.x, eb.y, [(255, 100, 100), (255, 255, 255)], 6)
+                for a in self.anomalies[:]:
+                    if eb.rect.colliderect(a.rect):
+                        if eb in self.enemy_bullets: self.enemy_bullets.remove(eb)
+                        self.detonate_anomaly(a)
+                
+        # Update Bombs
+        for b in self.bombs[:]:
+            b.update()
+            if b.exploded:
+                if b.explosion_timer >= b.explosion_duration:
+                    self.bombs.remove(b)
+            else:
+                # Check proximity trigger
+                triggered = False
+                for ent in self.enemies + boss_ents:
+                    if pygame.math.Vector2(b.x, b.y).distance_to(pygame.math.Vector2(ent.rect.center)) < 80:
+                        triggered = True
+                        break
+                if triggered:
+                    self.detonate_bomb(b, boss_ents)
+
+        # Update Homing Missiles
+        for m in self.missiles[:]:
+            m.update(self.enemies + boss_ents, self.camera_y, self.flares) # Pass flares to homing missiles
+            if m.exploded:
+                if m.explosion_timer >= m.explosion_duration:
+                    self.missiles.remove(m)
+            else:
+                for ent in self.enemies + boss_ents:
+                    if m.rect.colliderect(ent.rect):
+                        self.detonate_missile(m, boss_ents)
+                        break
+            if m.y < self.camera_y - 200 or m.y > self.camera_y + VIRTUAL_HEIGHT + 200:
+                if m in self.missiles: self.missiles.remove(m)
 
         # Update bullets
         for bullet in self.bullets[:]:
+            # Apply gravitational pull from gravity wells (strongly attracts other projectiles)
+            bullet_pos = pygame.math.Vector2(bullet.x, bullet.y)
+            for eb in self.enemy_bullets:
+                if getattr(eb, 'is_gravity', False):
+                    gw = pygame.math.Vector2(eb.x, eb.y)
+                    dist = bullet_pos.distance_to(gw)
+                    if 0 < dist < 450:
+                        to_gw = (gw - bullet_pos).normalize()
+                        dir_vec = pygame.math.Vector2(bullet.dx, bullet.dy).normalize()
+                        dir_vec += to_gw * (450 - dist) * 0.0025 # Median influence
+                        dir_vec = dir_vec.normalize()
+                        bullet.dx, bullet.dy = dir_vec.x, dir_vec.y
+
+            # Quantum Bullet Phasing
+            if self.current_zone == 'QUANTUM' and random.random() < 0.02:
+                bullet.x += random.randint(-40, 40)
+
             bullet.update()
-            if (bullet.y < self.camera_y - 100 or bullet.y > self.camera_y + VIRTUAL_HEIGHT + 100 or
+            # Bullet life/range check (Shotgun bullets die faster)
+            if hasattr(bullet, 'life'): bullet.life -= 1
+            bullet_life = getattr(bullet, 'life', 100)
+            
+            if (bullet_life <= 0 or bullet.y < self.camera_y - 100 or bullet.y > self.camera_y + VIRTUAL_HEIGHT + 100 or
                 bullet.x < self.camera_x - 100 or bullet.x > self.camera_x + VIRTUAL_WIDTH + 100):
                 self.bullets.remove(bullet)
 
         # Update torpedoes
         for torpedo in self.torpedoes[:]:
+            # Apply gravitational pull from gravity wells
+            torpedo_pos = pygame.math.Vector2(torpedo.x, torpedo.y)
+            for eb in self.enemy_bullets:
+                if getattr(eb, 'is_gravity', False):
+                    gw = pygame.math.Vector2(eb.x, eb.y)
+                    dist = torpedo_pos.distance_to(gw)
+                    if 0 < dist < 450:
+                        to_gw = (gw - torpedo_pos).normalize()
+                        dir_vec = pygame.math.Vector2(torpedo.dx, torpedo.dy).normalize()
+                        dir_vec += to_gw * (450 - dist) * 0.0025 # Median influence
+                        dir_vec = dir_vec.normalize()
+                        torpedo.dx, torpedo.dy = dir_vec.x, dir_vec.y
+
             torpedo.update()
             if torpedo.exploded:
                 if torpedo.explosion_timer >= torpedo.explosion_duration:
@@ -2168,42 +4836,64 @@ class Game:
                     self.torpedoes.remove(torpedo)
         
         for enemy in self.enemies[:]:
-            enemy.update(current_time, self.player, self.enemy_bullets, self.bullets)
-            if enemy.y > self.camera_y + VIRTUAL_HEIGHT + 100:
+            if getattr(enemy, 'is_phased', False): pass # Skip collision if phased
+            enemy.update(current_time, self.player, self.enemy_bullets, self.bullets, self.torpedoes, self.meteors + self.static_obstacles)
+            # Better Despawn: only remove if far from player and haven't shot recently
+            dist_to_player = pygame.math.Vector2(enemy.rect.center).distance_to(pygame.math.Vector2(self.player.rect.center))
+            if dist_to_player > 2000 and current_time - enemy.last_shot > 5000:
                 if enemy in self.enemies:
                     self.enemies.remove(enemy)
             elif not self.player.is_dead and self.player.rect.colliderect(enemy.rect):
-                # Scale crash damage: scouts/standards deal 2, heavy/elites deal 3, ice charger deals 4
-                crash_dmg = 2
-                if enemy.subtype == 'HEAVY':
-                    crash_dmg = 3
-                elif enemy.subtype == 'ELITE':
-                    crash_dmg = 3
-                if getattr(enemy, 'zone', '') == 'AQUARIS' and getattr(enemy, 'subtype', '') == 'SCOUT':
-                    crash_dmg = 4
+                crash_dmg = 2 if enemy.subtype not in ('HEAVY', 'ELITE') else 3
+                if getattr(enemy, 'zone', '') == 'AQUARIS' and getattr(enemy, 'subtype', '') == 'SCOUT': crash_dmg = 4
                 
+                # Vanguard Dash Ram
+                dash_ram = getattr(self.player, 'dash_damage', 0)
+                if dash_ram > 0 and current_time - self.player.last_dash < 350:
+                    enemy.health -= dash_ram
+                    self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, [(255, 0, 0), (255, 255, 0)], 15)
+                    if enemy.health <= 0:
+                        self._kill_enemy(enemy)
+                    continue
+                    
                 self._damage_player(current_time, damage=crash_dmg)
                 self._kill_enemy(enemy)
         
         # Update meteors
         for meteor in self.meteors[:]:
             meteor.update()
-            if meteor.y > self.camera_y + VIRTUAL_HEIGHT + 100:
-                if meteor in self.meteors:
-                    self.meteors.remove(meteor)
-            elif not self.player.is_dead and self.player.rect.colliderect(meteor.rect):
+            if not self.player.is_dead and self.player.rect.colliderect(meteor.rect):
                 self._damage_player(current_time, damage=0.5)
-                if meteor in self.meteors:
-                    self.meteors.remove(meteor)
+                self._destroy_meteor(meteor)
+
+        # Update small portals collisions (warp player forward by 2000px on entry)
+        for portal in self.small_portals[:]:
+            if not self.player.is_dead and self.player.rect.colliderect(portal.rect):
+                if portal in self.small_portals:
+                    self.small_portals.remove(portal)
+                self.player.y -= 2000
+                self.player.rect.y = int(self.player.y)
+                self.camera_y -= 2000
+                self.screen_shake = max(self.screen_shake, 35)
+                if SOUNDS: SOUNDS.play('warp')
+                px = self.player.x + self.player.width // 2
+                py = self.player.y + self.player.height // 2
+                self.spawn_explosion(px, py, [(0, 191, 255), (0, 255, 255), (255, 255, 255)], 40)
+                self.enemies = [e for e in self.enemies if pygame.math.Vector2(e.rect.center).distance_to(pygame.math.Vector2(px, py)) > 400]
+                self.meteors = [m for m in self.meteors if pygame.math.Vector2(m.rect.center).distance_to(pygame.math.Vector2(px, py)) > 400]
 
         # Update static obstacles collisions
         for obs in self.static_obstacles[:]:
             if not self.player.is_dead and self.player.rect.colliderect(obs.rect):
-                self._damage_player(current_time, damage=0.5)
-                self.spawn_explosion(obs.x + obs.size // 2, obs.y + obs.size // 2, 
-                                     [(128, 128, 128), (80, 80, 80)], 20)
-                if obs in self.static_obstacles:
-                    self.static_obstacles.remove(obs)
+                if isinstance(obs, FactoryStructure):
+                    # We handle pushback in the update step; only apply minor damage tick here
+                    self._damage_player(current_time, damage=0.1)
+                else:
+                    self._damage_player(current_time, damage=0.5)
+                    self.spawn_explosion(obs.x + obs.size // 2, obs.y + obs.size // 2, 
+                                         [(128, 128, 128), (80, 80, 80)], 20)
+                    if obs in self.static_obstacles:
+                        self.static_obstacles.remove(obs)
         
         # Bullet vs Enemy Laser collision
         for bullet in self.bullets[:]:
@@ -2216,38 +4906,76 @@ class Game:
         # Bullet vs Enemy collision
         for bullet in self.bullets[:]:
             for enemy in self.enemies[:]:
+                if abs(bullet.y - enemy.y) > 150: continue
+                if getattr(enemy, 'is_phased', False): continue
                 if bullet.rect.colliderect(enemy.rect):
-                    if bullet in self.bullets: self.bullets.remove(bullet)
+                    if getattr(self.player, 'has_mod_siphon', False) and self.player.shields < self.player.max_shields:
+                        self.player.shields = min(self.player.max_shields, self.player.shields + 0.05)
+                    if not bullet.piercing and bullet in self.bullets:
+                        self.bullets.remove(bullet)
                     if self.is_enemy_shielded(enemy):
                         self.spawn_explosion(bullet.x, bullet.y, [(0, 255, 255), (255, 255, 255)], 6)
                     else:
-                        enemy.health -= 0.5
+                        enemy.health -= 0.5 * self.player.damage_multiplier
+                        enemy.health -= bullet.damage * self.player.damage_multiplier
+                        self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
                         if enemy.health <= 0:
                             self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, 
                                                  [(255, 0, 0), (255, 128, 0), (255, 255, 0)], 15)
                             self._kill_enemy(enemy)
+                            
+            for d in self.derelicts[:]:
+                if bullet.rect.colliderect(d.rect):
+                    if not bullet.piercing and bullet in self.bullets:
+                        self.bullets.remove(bullet)
+                    d.health -= bullet.damage * self.player.damage_multiplier
+                    self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                    if d.health <= 0:
+                        self.spawn_explosion(d.x, d.y, [(200,100,50), (100,50,20)], 20)
+                        for _ in range(random.randint(5, 10)):
+                            self.scraps.append(Scrap(d.x + random.randint(-20, 20), d.y + random.randint(-20, 20)))
+                        if d in self.derelicts: self.derelicts.remove(d)
+            for a in self.anomalies[:]:
+                if bullet.rect.colliderect(a.rect):
+                    if not bullet.piercing and bullet in self.bullets:
+                        self.bullets.remove(bullet)
+                    self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                    self.detonate_anomaly(a)
                         
         # Bullet vs Meteor collision
         for bullet in self.bullets[:]:
             for meteor in self.meteors[:]:
                 if bullet.rect.colliderect(meteor.rect):
-                    if bullet in self.bullets: self.bullets.remove(bullet)
+                    if not bullet.piercing and bullet in self.bullets: 
+                        self.bullets.remove(bullet)
                     if meteor in self.meteors:
-                        self.spawn_explosion(meteor.rect.centerx, meteor.rect.centery, 
-                                             [(128, 128, 128), (100, 100, 100), (80, 80, 80)], 25)
-                        self.meteors.remove(meteor)
-                        self.player.add_credits(meteor.credits_value)
+                        self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                        self._destroy_meteor(meteor)
 
         # Bullet vs Static Obstacle
         for bullet in self.bullets[:]:
             for obs in self.static_obstacles[:]:
                 if bullet.rect.colliderect(obs.rect):
-                    if bullet in self.bullets: self.bullets.remove(bullet)
-                    self.spawn_explosion(obs.rect.centerx, obs.rect.centery, 
-                                         [(128, 128, 128), (80, 80, 80)], 20)
-                    if obs in self.static_obstacles:
-                        self.static_obstacles.remove(obs)
-                    self.player.add_credits(obs.credits_value)
+                    if not bullet.piercing and bullet in self.bullets:
+                        self.bullets.remove(bullet)
+                    self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                    if hasattr(obs, 'health'):
+                        if isinstance(obs, FactoryStructure):
+                            pass
+                        else:
+                            obs.health -= bullet.damage * self.player.damage_multiplier
+                            if obs.health <= 0:
+                                self.spawn_explosion(obs.rect.centerx, obs.rect.centery, 
+                                                     [(110, 110, 115), (70, 70, 75)], 25)
+                                if obs in self.static_obstacles:
+                                    self.static_obstacles.remove(obs)
+                                self.player.add_credits(obs.credits_value)
+                    else:
+                        self.spawn_explosion(obs.rect.centerx, obs.rect.centery, 
+                                             [(128, 128, 128), (80, 80, 80)], 20)
+                        if obs in self.static_obstacles:
+                            self.static_obstacles.remove(obs)
+                        self.player.add_credits(obs.credits_value)
 
         # Torpedo trigger and AOE logic
         for torpedo in self.torpedoes[:]:
@@ -2267,6 +4995,16 @@ class Game:
                         if torpedo.rect.colliderect(obs.rect):
                             hit = True
                             break
+                if not hit:
+                    for d in self.derelicts:
+                        if torpedo.rect.colliderect(d.rect):
+                            hit = True
+                            break
+                if not hit:
+                    for a in self.anomalies:
+                        if torpedo.rect.colliderect(a.rect):
+                            hit = True
+                            break
                 if hit:
                     torpedo.exploded = True
                     for enemy in self.enemies[:]:
@@ -2276,23 +5014,32 @@ class Game:
                             else:
                                 self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, 
                                                      [(255, 0, 0), (255, 128, 0), (255, 255, 0)], 15)
-                                enemy.health -= 3
+                                enemy.health -= 3 * self.player.damage_multiplier
                                 if enemy.health <= 0:
                                     self._kill_enemy(enemy)
                     for meteor in self.meteors[:]:
                         if torpedo.rect.colliderect(meteor.rect):
-                            self.spawn_explosion(meteor.rect.centerx, meteor.rect.centery, 
-                                                 [(128, 128, 128), (100, 100, 100), (80, 80, 80)], 25)
-                            if meteor in self.meteors:
-                                self.meteors.remove(meteor)
-                            self.player.add_credits(meteor.credits_value)
+                            self._destroy_meteor(meteor)
                     for obs in self.static_obstacles[:]:
                         if torpedo.rect.colliderect(obs.rect):
+                            if isinstance(obs, FactoryStructure):
+                                continue
                             self.spawn_explosion(obs.rect.centerx, obs.rect.centery, 
                                                  [(128, 128, 128), (80, 80, 80)], 20)
                             if obs in self.static_obstacles:
                                 self.static_obstacles.remove(obs)
                             self.player.add_credits(obs.credits_value)
+                    for d in self.derelicts[:]:
+                        if torpedo.rect.colliderect(d.rect):
+                            d.health -= 3 * self.player.damage_multiplier
+                            if d.health <= 0:
+                                self.spawn_explosion(d.x, d.y, [(200, 100, 50), (100, 50, 20)], 20)
+                                for _ in range(random.randint(5, 10)):
+                                    self.scraps.append(Scrap(d.x + random.randint(-20, 20), d.y + random.randint(-20, 20)))
+                                if d in self.derelicts: self.derelicts.remove(d)
+                    for a in self.anomalies[:]:
+                        if torpedo.rect.colliderect(a.rect):
+                            self.detonate_anomaly(a)
 
             if torpedo.exploded:
                 progress = torpedo.explosion_timer / torpedo.explosion_duration
@@ -2308,7 +5055,7 @@ class Game:
                             else:
                                 self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, 
                                                      [(255, 0, 0), (255, 128, 0), (255, 255, 0)], 15)
-                                enemy.health -= 1.5
+                                enemy.health -= 1.5 * self.player.damage_multiplier
                                 if enemy.health <= 0:
                                     self._kill_enemy(enemy)
                             
@@ -2316,10 +5063,7 @@ class Game:
                     meteor_center = pygame.math.Vector2(meteor.rect.center)
                     if torpedo_center.distance_to(meteor_center) <= current_radius:
                         if meteor in self.meteors:
-                            self.spawn_explosion(meteor.rect.centerx, meteor.rect.centery, 
-                                                 [(128, 128, 128), (100, 100, 100), (80, 80, 80)], 25)
-                            self.meteors.remove(meteor)
-                            self.player.add_credits(meteor.credits_value)
+                            self._destroy_meteor(meteor)
 
                 for obs in self.static_obstacles[:]:
                     obs_center = pygame.math.Vector2(obs.rect.center)
@@ -2329,6 +5073,23 @@ class Game:
                                                  [(128, 128, 128), (80, 80, 80)], 20)
                             self.static_obstacles.remove(obs)
                             self.player.add_credits(obs.credits_value)
+                            
+                for d in self.derelicts[:]:
+                    obs_center = pygame.math.Vector2(d.rect.center)
+                    if torpedo_center.distance_to(obs_center) <= current_radius:
+                        if d in self.derelicts:
+                            d.health -= 1.5 * self.player.damage_multiplier
+                            self.spawn_explosion(d.x, d.y, [(200, 100, 50), (100, 50, 20)], 4)
+                            if d.health <= 0:
+                                self.spawn_explosion(d.x, d.y, [(200, 100, 50), (100, 50, 20)], 20)
+                                for _ in range(random.randint(5, 10)):
+                                    self.scraps.append(Scrap(d.x + random.randint(-20, 20), d.y + random.randint(-20, 20)))
+                                if d in self.derelicts: self.derelicts.remove(d)
+                for a in self.anomalies[:]:
+                    obs_center = pygame.math.Vector2(a.rect.center)
+                    if torpedo_center.distance_to(obs_center) <= current_radius:
+                        if a in self.anomalies:
+                            self.detonate_anomaly(a)
                             
                 for eb in self.enemy_bullets[:]:
                     eb_pos = pygame.math.Vector2(eb.x, eb.y)
@@ -2341,7 +5102,8 @@ class Game:
         for bullet in self.bullets[:]:
             for crystal in self.shield_crystals[:]:
                 if bullet.rect.colliderect(crystal.rect):
-                    if bullet in self.bullets: self.bullets.remove(bullet)
+                    if not bullet.piercing and bullet in self.bullets: 
+                        self.bullets.remove(bullet)
                     crystal.health -= 0.5
                     self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 8)
                     if crystal.health <= 0:
@@ -2352,7 +5114,8 @@ class Game:
             if self.boss and self.boss.zone == 'AQUARIS' and not self.boss.is_dead:
                 for crystal in self.boss.shield_crystals[:]:
                     if crystal.health > 0 and bullet.rect.colliderect(crystal.rect):
-                        if bullet in self.bullets: self.bullets.remove(bullet)
+                        if not bullet.piercing and bullet in self.bullets:
+                            self.bullets.remove(bullet)
                         crystal.health -= 0.5
                         self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 8)
                         if crystal.health <= 0:
@@ -2417,12 +5180,9 @@ class Game:
                         hit_ent = ent
                         break
                 if hit_ent:
-                    if bullet in self.bullets:
-                        self.bullets.remove(bullet)
-                    if self.boss.shielded:
-                        self.spawn_explosion(bullet.x, bullet.y, [(0, 255, 255), (255, 255, 255)], 6)
-                    else:
-                        hit_ent.health -= 0.5
+                        # Boss has 40% resistance towards standard bullets
+                        bullet_resistance_mult = 0.60
+                        hit_ent.health -= bullet.damage * self.player.damage_multiplier * bullet_resistance_mult
                         self.boss.health = sum(e.health for e in self.boss.sub_bosses if not e.is_dead)
                         self.spawn_explosion(bullet.x, bullet.y, [(255, 0, 0), (255, 128, 0)], 6)
                         if hit_ent.health <= 0:
@@ -2473,6 +5233,55 @@ class Game:
                                             self._defeat_boss()
                                             break
 
+        # Seamless wrapping for all entities relative to the player
+        if self.state in ('PLAYING', 'PAUSED', 'GAME_OVER'):
+            map_width = 5200
+            for lists in [self.bullets, self.torpedoes, self.bombs, self.missiles, 
+                          self.support_ships, self.enemies, self.enemy_bullets, 
+                          self.meteors, self.materials, self.scraps, self.gas_clouds, 
+                          self.ambient_debris, self.derelicts, self.anomalies, self.static_obstacles,
+                          self.particles, self.flares, self.loot_pickups, self.shield_crystals,
+                          self.gravity_wells, self.drones]:
+                for obj in lists:
+                    if hasattr(obj, 'x'):
+                        dx = obj.x - self.player.x
+                        dx_wrapped = (dx + map_width // 2) % map_width - map_width // 2
+                        x_wrapped = self.player.x + dx_wrapped
+                        delta_x = x_wrapped - obj.x
+                        if delta_x != 0:
+                            obj.x = x_wrapped
+                            if hasattr(obj, 'rect') and obj.rect is not None:
+                                obj.rect.x += int(delta_x)
+
+            if self.boss:
+                dx = self.boss.x - self.player.x
+                dx_wrapped = (dx + map_width // 2) % map_width - map_width // 2
+                x_wrapped = self.player.x + dx_wrapped
+                delta_x = x_wrapped - self.boss.x
+                if delta_x != 0:
+                    self.boss.x = x_wrapped
+                
+                for sb in self.boss.sub_bosses:
+                    dx = sb.x - self.player.x
+                    dx_wrapped = (dx + map_width // 2) % map_width - map_width // 2
+                    x_wrapped = self.player.x + dx_wrapped
+                    delta_x = x_wrapped - sb.x
+                    if delta_x != 0:
+                        sb.x = x_wrapped
+                        if hasattr(sb, 'rect') and sb.rect is not None:
+                            sb.rect.x += int(delta_x)
+                
+                if hasattr(self.boss, 'shield_crystals'):
+                    for c in self.boss.shield_crystals:
+                        dx = c.x - self.player.x
+                        dx_wrapped = (dx + map_width // 2) % map_width - map_width // 2
+                        x_wrapped = self.player.x + dx_wrapped
+                        delta_x = x_wrapped - c.x
+                        if delta_x != 0:
+                            c.x = x_wrapped
+                            if hasattr(c, 'rect') and c.rect is not None:
+                                c.rect.x += int(delta_x)
+
     def is_enemy_shielded(self, enemy):
         # Shielded by level crystals
         for crystal in self.shield_crystals:
@@ -2485,6 +5294,286 @@ class Game:
             return True
         return False
 
+    def detonate_missile(self, m, boss_ents):
+        m.exploded = True
+        m.explosion_timer = 0
+        damage_mult = self.player.damage_multiplier
+        
+        # 1. Direct hit damage to colliding entities
+        # Check enemies
+        for enemy in self.enemies[:]:
+            if m.rect.colliderect(enemy.rect):
+                if self.is_enemy_shielded(enemy):
+                    self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, [(0, 255, 255), (255, 255, 255)], 10)
+                else:
+                    self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, [(255, 0, 0), (255, 128, 0)], 12)
+                    enemy.health -= 2.4 * damage_mult
+                    if enemy.health <= 0:
+                        self._kill_enemy(enemy)
+        
+        # Check boss entities
+        for ent in boss_ents:
+            if m.rect.colliderect(ent.rect):
+                if not self.boss.shielded:
+                    ent.health -= 1.6
+                    self.boss.health = sum(e.health for e in self.boss.sub_bosses if not e.is_dead)
+                    self.spawn_explosion(m.x, m.y, [(255, 0, 0), (255, 128, 0)], 15)
+                    if ent.health <= 0:
+                        ent.is_dead = True
+                        self.spawn_explosion(ent.x, ent.y, [ent.color, (255, 255, 255)], 15)
+                        if all(e.is_dead for e in self.boss.sub_bosses):
+                            self._defeat_boss()
+
+        # Check shield crystals
+        for crystal in self.shield_crystals[:]:
+            if m.rect.colliderect(crystal.rect):
+                crystal.health -= 0.8
+                self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 10)
+                if crystal.health <= 0:
+                    if crystal in self.shield_crystals: self.shield_crystals.remove(crystal)
+                    self.player.add_credits(40)
+                    self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 20)
+
+        if self.boss and self.boss.zone == 'AQUARIS' and not self.boss.is_dead:
+            for crystal in self.boss.shield_crystals[:]:
+                if crystal.health > 0 and m.rect.colliderect(crystal.rect):
+                    crystal.health -= 0.8
+                    self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 10)
+                    if crystal.health <= 0:
+                        self.player.add_credits(50)
+                        self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 20)
+
+        # Check derelicts
+        for d in self.derelicts[:]:
+            if m.rect.colliderect(d.rect):
+                d.health -= 2.4 * damage_mult
+                if d.health <= 0:
+                    self.spawn_explosion(d.x, d.y, [(200, 100, 50), (100, 50, 20)], 20)
+                    for _ in range(random.randint(5, 10)):
+                        self.scraps.append(Scrap(d.x + random.randint(-20, 20), d.y + random.randint(-20, 20)))
+                    if d in self.derelicts: self.derelicts.remove(d)
+
+        # Check meteors
+        for meteor in self.meteors[:]:
+            if m.rect.colliderect(meteor.rect):
+                self._destroy_meteor(meteor)
+
+        # Check static obstacles
+        for obs in self.static_obstacles[:]:
+            if m.rect.colliderect(obs.rect):
+                self.spawn_explosion(obs.rect.centerx, obs.rect.centery, [(128, 128, 128), (80, 80, 80)], 18)
+                if obs in self.static_obstacles: self.static_obstacles.remove(obs)
+                self.player.add_credits(obs.credits_value)
+
+        # Check anomalies
+        for a in self.anomalies[:]:
+            if m.rect.colliderect(a.rect):
+                self.detonate_anomaly(a)
+
+        # 2. AoE / Splash damage to entities within explosion radius
+        m_pos = pygame.math.Vector2(m.x, m.y)
+        
+        # Enemies AoE
+        for enemy in self.enemies[:]:
+            if m_pos.distance_to(pygame.math.Vector2(enemy.rect.center)) < m.explosion_radius:
+                if self.is_enemy_shielded(enemy):
+                    self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, [(0, 255, 255), (255, 255, 255)], 8)
+                else:
+                    self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, [(255, 0, 0), (255, 128, 0)], 10)
+                    enemy.health -= 1.2 * damage_mult
+                    if enemy.health <= 0:
+                        self._kill_enemy(enemy)
+
+        # Boss AoE
+        for ent in boss_ents:
+            if m_pos.distance_to(pygame.math.Vector2(ent.rect.center)) < m.explosion_radius:
+                if not self.boss.shielded:
+                    ent.health -= 0.8
+                    self.boss.health = sum(e.health for e in self.boss.sub_bosses if not e.is_dead)
+                    self.spawn_explosion(ent.x, ent.y, [(255, 0, 0), (255, 128, 0)], 12)
+                    if ent.health <= 0:
+                        ent.is_dead = True
+                        self.spawn_explosion(ent.x, ent.y, [ent.color, (255, 255, 255)], 15)
+                        if all(e.is_dead for e in self.boss.sub_bosses):
+                            self._defeat_boss()
+
+        # Shield crystals AoE
+        for crystal in self.shield_crystals[:]:
+            if m_pos.distance_to(pygame.math.Vector2(crystal.x, crystal.y)) < m.explosion_radius:
+                crystal.health -= 0.4
+                self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 8)
+                if crystal.health <= 0:
+                    if crystal in self.shield_crystals: self.shield_crystals.remove(crystal)
+                    self.player.add_credits(40)
+                    self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 20)
+
+        if self.boss and self.boss.zone == 'AQUARIS' and not self.boss.is_dead:
+            for crystal in self.boss.shield_crystals[:]:
+                if crystal.health > 0 and m_pos.distance_to(pygame.math.Vector2(crystal.x, crystal.y)) < m.explosion_radius:
+                    crystal.health -= 0.4
+                    self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 8)
+                    if crystal.health <= 0:
+                        self.player.add_credits(50)
+                        self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 20)
+
+        # Derelicts AoE
+        for d in self.derelicts[:]:
+            if m_pos.distance_to(pygame.math.Vector2(d.rect.center)) < m.explosion_radius:
+                d.health -= 1.2 * damage_mult
+                if d.health <= 0:
+                    self.spawn_explosion(d.x, d.y, [(200, 100, 50), (100, 50, 20)], 20)
+                    for _ in range(random.randint(5, 10)):
+                        self.scraps.append(Scrap(d.x + random.randint(-20, 20), d.y + random.randint(-20, 20)))
+                    if d in self.derelicts: self.derelicts.remove(d)
+
+        # Enemy Bullets AoE (destroy them)
+        for eb in self.enemy_bullets[:]:
+            if m_pos.distance_to(pygame.math.Vector2(eb.x, eb.y)) < m.explosion_radius:
+                if eb in self.enemy_bullets:
+                    self.spawn_explosion(eb.x, eb.y, [(255, 255, 255), (100, 100, 255)], 6)
+                    self.enemy_bullets.remove(eb)
+
+    def detonate_bomb(self, b, boss_ents):
+        b.exploded = True
+        b.explosion_timer = 0
+        damage_mult = self.player.damage_multiplier
+        
+        # 1. Direct hit damage to colliding entities
+        # Check enemies
+        for enemy in self.enemies[:]:
+            if b.rect.colliderect(enemy.rect):
+                if self.is_enemy_shielded(enemy):
+                    self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, [(0, 255, 255), (255, 255, 255)], 10)
+                else:
+                    self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, [(255, 0, 0), (255, 128, 0)], 18)
+                    enemy.health -= 4.5 * damage_mult
+                    if enemy.health <= 0:
+                        self._kill_enemy(enemy)
+        
+        # Check boss entities
+        for ent in boss_ents:
+            if b.rect.colliderect(ent.rect):
+                if not self.boss.shielded:
+                    ent.health -= 3.0
+                    self.boss.health = sum(e.health for e in self.boss.sub_bosses if not e.is_dead)
+                    self.spawn_explosion(b.x, b.y, [(255, 0, 0), (255, 128, 0)], 22)
+                    if ent.health <= 0:
+                        ent.is_dead = True
+                        self.spawn_explosion(ent.x, ent.y, [ent.color, (255, 255, 255)], 15)
+                        if all(e.is_dead for e in self.boss.sub_bosses):
+                            self._defeat_boss()
+
+        # Check shield crystals
+        for crystal in self.shield_crystals[:]:
+            if b.rect.colliderect(crystal.rect):
+                crystal.health -= 1.5
+                self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 12)
+                if crystal.health <= 0:
+                    if crystal in self.shield_crystals: self.shield_crystals.remove(crystal)
+                    self.player.add_credits(40)
+                    self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 20)
+
+        if self.boss and self.boss.zone == 'AQUARIS' and not self.boss.is_dead:
+            for crystal in self.boss.shield_crystals[:]:
+                if crystal.health > 0 and b.rect.colliderect(crystal.rect):
+                    crystal.health -= 1.5
+                    self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 12)
+                    if crystal.health <= 0:
+                        self.player.add_credits(50)
+                        self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 20)
+
+        # Check derelicts
+        for d in self.derelicts[:]:
+            if b.rect.colliderect(d.rect):
+                d.health -= 4.5 * damage_mult
+                if d.health <= 0:
+                    self.spawn_explosion(d.x, d.y, [(200, 100, 50), (100, 50, 20)], 20)
+                    for _ in range(random.randint(5, 10)):
+                        self.scraps.append(Scrap(d.x + random.randint(-20, 20), d.y + random.randint(-20, 20)))
+                    if d in self.derelicts: self.derelicts.remove(d)
+
+        # Check meteors
+        for meteor in self.meteors[:]:
+            if b.rect.colliderect(meteor.rect):
+                self._destroy_meteor(meteor)
+
+        # Check static obstacles
+        for obs in self.static_obstacles[:]:
+            if b.rect.colliderect(obs.rect):
+                if isinstance(obs, FactoryStructure):
+                    continue
+                self.spawn_explosion(obs.rect.centerx, obs.rect.centery, [(128, 128, 128), (80, 80, 80)], 22)
+                if obs in self.static_obstacles: self.static_obstacles.remove(obs)
+                self.player.add_credits(obs.credits_value)
+
+        # Check anomalies
+        for a in self.anomalies[:]:
+            if b.rect.colliderect(a.rect):
+                self.detonate_anomaly(a)
+
+        # 2. AoE / Splash damage to entities within explosion radius
+        b_pos = pygame.math.Vector2(b.x, b.y)
+        
+        # Enemies AoE
+        for enemy in self.enemies[:]:
+            if b_pos.distance_to(pygame.math.Vector2(enemy.rect.center)) < b.explosion_radius:
+                if self.is_enemy_shielded(enemy):
+                    self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, [(0, 255, 255), (255, 255, 255)], 8)
+                else:
+                    self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, [(255, 0, 0), (255, 128, 0)], 12)
+                    enemy.health -= 2.25 * damage_mult
+                    if enemy.health <= 0:
+                        self._kill_enemy(enemy)
+
+        # Boss AoE
+        for ent in boss_ents:
+            if b_pos.distance_to(pygame.math.Vector2(ent.rect.center)) < b.explosion_radius:
+                if not self.boss.shielded:
+                    ent.health -= 1.5
+                    self.boss.health = sum(e.health for e in self.boss.sub_bosses if not e.is_dead)
+                    self.spawn_explosion(ent.x, ent.y, [(255, 0, 0), (255, 128, 0)], 14)
+                    if ent.health <= 0:
+                        ent.is_dead = True
+                        self.spawn_explosion(ent.x, ent.y, [ent.color, (255, 255, 255)], 15)
+                        if all(e.is_dead for e in self.boss.sub_bosses):
+                            self._defeat_boss()
+
+        # Shield crystals AoE
+        for crystal in self.shield_crystals[:]:
+            if b_pos.distance_to(pygame.math.Vector2(crystal.x, crystal.y)) < b.explosion_radius:
+                crystal.health -= 0.75
+                self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 8)
+                if crystal.health <= 0:
+                    if crystal in self.shield_crystals: self.shield_crystals.remove(crystal)
+                    self.player.add_credits(40)
+                    self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 20)
+
+        if self.boss and self.boss.zone == 'AQUARIS' and not self.boss.is_dead:
+            for crystal in self.boss.shield_crystals[:]:
+                if crystal.health > 0 and b_pos.distance_to(pygame.math.Vector2(crystal.x, crystal.y)) < b.explosion_radius:
+                    crystal.health -= 0.75
+                    self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 8)
+                    if crystal.health <= 0:
+                        self.player.add_credits(50)
+                        self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 20)
+
+        # Derelicts AoE
+        for d in self.derelicts[:]:
+            if b_pos.distance_to(pygame.math.Vector2(d.rect.center)) < b.explosion_radius:
+                d.health -= 2.25 * damage_mult
+                if d.health <= 0:
+                    self.spawn_explosion(d.x, d.y, [(200, 100, 50), (100, 50, 20)], 20)
+                    for _ in range(random.randint(5, 10)):
+                        self.scraps.append(Scrap(d.x + random.randint(-20, 20), d.y + random.randint(-20, 20)))
+                    if d in self.derelicts: self.derelicts.remove(d)
+
+        # Enemy Bullets AoE (destroy them)
+        for eb in self.enemy_bullets[:]:
+            if b_pos.distance_to(pygame.math.Vector2(eb.x, eb.y)) < b.explosion_radius:
+                if eb in self.enemy_bullets:
+                    self.spawn_explosion(eb.x, eb.y, [(255, 255, 255), (100, 100, 255)], 6)
+                    self.enemy_bullets.remove(eb)
+
     def _defeat_boss(self):
         self.boss.is_dead = True
         for ent in self.boss.sub_bosses:
@@ -2492,6 +5581,39 @@ class Game:
                 self.spawn_explosion(ent.x + random.randint(-20, 20), ent.y + random.randint(-20, 20),
                                      [(255, 255, 0), (255, 128, 0), (255, 255, 255), (255, 0, 0)], 25)
         self.player.add_credits(300)
+        self.player.award_xp(180)
+        self.active_quest.progress = 1
+        self._update_quests()
+
+    def _update_quests(self):
+        for quest in self.quests:
+            if quest.completed:
+                continue
+            if quest.key == 'collect_cores':
+                quest.progress = min(quest.target, self.materials_collected)
+            elif quest.key == 'defeat_boss':
+                quest.progress = 1 if (self.boss_defeated and self.current_zone == 'SINGULARITY') else 0
+            elif quest.key == 'defeat_orion':
+                quest.progress = 1 if (self.boss_defeated and self.current_zone == 'ORION') else 0
+                
+            if quest.is_complete():
+                quest.completed = True
+                self.player.add_credits(quest.reward_credits)
+                self.player.award_xp(quest.reward_xp)
+                self.spawn_explosion(self.player.x + self.player.width // 2, self.player.y + self.player.height // 2, [(0, 255, 255), (255, 215, 0)], 20)
+                
+                # Advance campaign stage!
+                if quest.key == 'collect_cores' and self.campaign_stage == 1:
+                    self.campaign_stage = 2
+                    for z in ['VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'VOID', 'QUANTUM', 'SINGULARITY']:
+                        self.unlocked_zones[z] = True
+                    self.current_hub_index = 2
+                elif quest.key == 'defeat_boss' and self.campaign_stage == 2:
+                    self.campaign_stage = 3
+                    self.unlocked_zones['ORION'] = True
+                    self.current_hub_index = 3
+                
+                self.active_quest = self.quests[min(len(self.quests)-1, self.campaign_stage - 1)]
 
     def _kill_enemy(self, enemy):
         if enemy in self.enemies:
@@ -2499,52 +5621,273 @@ class Game:
                 enemy.on_death(self.enemy_bullets, self.player)
             self.enemies.remove(enemy)
             self.player.add_credits(enemy.credits_value)
-            if random.random() < 0.60:
-                self.scraps.append(Scrap(enemy.rect.centerx, enemy.rect.centery))
+            self.player.award_xp(10 + enemy.credits_value // 10)
+            if random.random() < 0.80:
+                scrap_count = 1
+                if enemy.credits_value >= 35 or enemy.health > 3:
+                    scrap_count += 1
+                if random.random() < 0.25:
+                    scrap_count += 1
+                for _ in range(scrap_count):
+                    self.scraps.append(Scrap(enemy.rect.centerx, enemy.rect.centery))
+            if random.random() < 0.25:
+                self.loot_pickups.append(LootPickup(enemy.rect.centerx, enemy.rect.centery))
+
+    def _destroy_meteor(self, meteor):
+        if meteor not in self.meteors:
+            return
+        self.meteors.remove(meteor)
+        
+        # Add credits
+        self.player.add_credits(meteor.credits_value)
+        
+        # Centralized explosion (spawn spatial explosion if audio enabled)
+        if SOUNDS:
+            SOUNDS.play_spatial('explosion', meteor.rect.centerx, meteor.rect.centery, self.player.x, self.player.y)
+        
+        self.spawn_explosion(meteor.rect.centerx, meteor.rect.centery, 
+                             [(128, 128, 128), (100, 100, 100), (80, 80, 80)], 25)
+        
+        # Asteroid Fragmentation
+        if meteor.size >= 45:
+            num_fragments = random.randint(2, 3)
+            for _ in range(num_fragments):
+                frag_size = random.randint(15, 25)
+                fx = meteor.x + random.uniform(-15, 15)
+                fy = meteor.y + random.uniform(-15, 15)
+                
+                fspeed_y = meteor.speed_y + random.uniform(-1.8, 1.8)
+                fspeed_x = meteor.speed_x + random.uniform(-1.8, 1.8)
+                if fspeed_y == 0 and fspeed_x == 0:
+                    fspeed_y = 1.0
+                
+                frag = Meteor(fx, fy, speed_y=fspeed_y, speed_x=fspeed_x)
+                frag.size = frag_size
+                frag.rect = pygame.Rect(fx, fy, frag_size, frag_size)
+                frag.is_static = meteor.is_static
+                
+                # Regenerate polygon points for the fragment
+                frag.points = []
+                num_points = 6
+                for i in range(num_points):
+                    angle = (i / num_points) * 2 * math.pi
+                    radius = random.uniform(frag_size // 3, frag_size // 2)
+                    px = frag_size // 2 + radius * math.cos(angle)
+                    py = frag_size // 2 + radius * math.sin(angle)
+                    frag.points.append((px, py))
+                
+                self.meteors.append(frag)
+
+    def _draw_cinematic_ship(self, surface, x, y, dir_x, dir_y, scale=1.0, damaged=False, thruster_intensity=1.0, rotation_angle=0):
+        current_time = pygame.time.get_ticks()
+        dir_f = pygame.math.Vector2(dir_x, dir_y)
+        if dir_f.length() > 0:
+            dir_f = dir_f.normalize()
+        else:
+            dir_f = pygame.math.Vector2(1, 0)
+            
+        if rotation_angle != 0:
+            dir_f = dir_f.rotate(rotation_angle)
+            
+        dir_r = pygame.math.Vector2(-dir_f.y, dir_f.x)
+        
+        # Determine player class color
+        cls = self.player.class_name if (hasattr(self, 'player') and self.player) else 'RANGER'
+        base_color = CYAN
+        if cls == 'ENGINEER':
+            base_color = GOLD
+        elif cls == 'VANGUARD':
+            base_color = MAGENTA
+        elif cls == 'SNIPER':
+            base_color = YELLOW
+        elif cls == 'ASSASSIN':
+            base_color = PURPLE
+            
+        color = (40, 40, 45) if damaged else base_color
+        wing_color = (25, 25, 28) if damaged else SLATE_GRAY
+        glass_color = (15, 15, 18) if damaged else WHITE
+        
+        center = pygame.math.Vector2(x, y)
+        w = 40 * scale
+        h = 40 * scale
+        
+        # 1. THRUSTER FLAMES
+        if thruster_intensity > 0 and not damaged:
+            flame_len = (15 + random.randint(0, 10)) * scale * thruster_intensity
+            rear_center = center - dir_f * (h // 2)
+            flame_tip = rear_center - dir_f * flame_len
+            flame_l = rear_center - dir_r * (8 * scale)
+            flame_r = rear_center + dir_r * (8 * scale)
+            flame_col = CYAN if cls == 'RANGER' else ORANGE
+            pygame.draw.polygon(surface, flame_col, [rear_center, flame_l, flame_tip, flame_r], width=1)
+            pygame.draw.line(surface, WHITE if cls == 'RANGER' else YELLOW, rear_center, rear_center - dir_f * (flame_len * 0.65), max(1, int(scale)))
+            
+        # 2. WINGS
+        lw_tip = center - dir_f * (5 * scale) - dir_r * (w // 2)
+        lw_base_in = center - dir_f * (h // 2) - dir_r * (5 * scale)
+        lw_base_out = center - dir_f * (h // 3) - dir_r * (w // 2)
+        pygame.draw.polygon(surface, wing_color, [center, lw_tip, lw_base_out, lw_base_in])
+        
+        rw_tip = center - dir_f * (5 * scale) + dir_r * (w // 2)
+        rw_base_in = center - dir_f * (h // 2) + dir_r * (5 * scale)
+        rw_base_out = center - dir_f * (h // 3) + dir_r * (w // 2)
+        pygame.draw.polygon(surface, wing_color, [center, rw_tip, rw_base_out, rw_base_in])
+        
+        # 3. WING CANNONS
+        weapon_level = self.player.skills['weapon'] if (hasattr(self, 'player') and self.player) else 0
+        if weapon_level >= 1 and not damaged:
+            pygame.draw.line(surface, color, lw_tip, lw_tip + dir_f * (12 * scale), width=max(1, int(3*scale)))
+            pygame.draw.line(surface, color, rw_tip, rw_tip + dir_f * (12 * scale), width=max(1, int(3*scale)))
+            
+        # 4. MAIN HULL (Triangle shape)
+        hull_tip = center + dir_f * (h // 2)
+        hull_left = center - dir_f * (h // 4) - dir_r * (8 * scale)
+        hull_right = center - dir_f * (h // 4) + dir_r * (8 * scale)
+        pygame.draw.polygon(surface, color, [hull_tip, hull_left, hull_right])
+        
+        # 5. COCKPIT GLASS
+        glass_tip = center + dir_f * (h // 3)
+        glass_left = center + dir_f * (h // 8) - dir_r * (4 * scale)
+        glass_right = center + dir_f * (h // 8) + dir_r * (4 * scale)
+        pygame.draw.polygon(surface, glass_color, [glass_tip, glass_left, glass_right])
+        
+        # 6. SHIELD FORCEFIELD (light pulsing during cinematic if not damaged)
+        if not damaged and hasattr(self, 'player') and self.player and self.player.shields > 0 and thruster_intensity > 0.5:
+            glow_surf = pygame.Surface((int(w * 2), int(h * 2)), pygame.SRCALPHA)
+            glow_intensity = 30 + int(15 * math.sin(current_time * 0.01))
+            pygame.draw.circle(glow_surf, (0, 255, 255, glow_intensity), (int(w), int(h)), int(w * 0.9), width=2)
+            surface.blit(glow_surf, (int(x - w), int(y - h)))
+
+    def _draw_targeting_reticle(self, screen, target_x, target_y):
+        ticks = pygame.time.get_ticks()
+        draw_x = target_x - self.camera_x
+        draw_y = target_y - self.camera_y
+        
+        size = 60 + int(10 * math.sin(ticks * 0.02))
+        angle = ticks * 0.005
+        
+        # Rotating brackets
+        for i in range(4):
+            ang = angle + i * (math.pi / 2)
+            p1 = (draw_x + math.cos(ang) * size, draw_y + math.sin(ang) * size)
+            p2 = (draw_x + math.cos(ang + 0.3) * size, draw_y + math.sin(ang + 0.3) * size)
+            pygame.draw.line(screen, RED, p1, p2, width=3)
+            
+            # Inner small lines
+            isize = size - 15
+            pygame.draw.line(screen, RED, (draw_x + math.cos(ang)*isize, draw_y + math.sin(ang)*isize), 
+                                          (draw_x + math.cos(ang)*(isize-10), draw_y + math.sin(ang)*(isize-10)), 1)
+        
+        # Lock-on text
+        if ticks % 500 < 250:
+            font = pygame.font.SysFont("Arial", 12, bold=True)
+            txt = font.render("THREAT TRACKING", True, RED)
+            screen.blit(txt, (draw_x - txt.get_width()//2, draw_y + size + 10))
 
     def _draw(self):
         self.virtual_screen.fill(BLACK)
+        self.ui_surface.fill((0, 0, 0, 0))
         
-        if self.state == 'HUB':
+        ticks = pygame.time.get_ticks()
+        current_time = ticks
+        
+        # 1. TACTICAL OVERLAYS & BACKGROUNDS
+        has_major_threat = False
+        if self.boss and not self.boss.is_dead:
+            has_major_threat = True
+        else:
+            for e in self.enemies:
+                if getattr(e, 'subtype', '') == 'ELITE':
+                    has_major_threat = True
+                    break
+        
+        if self.state == 'PLAYING' and has_major_threat and not self.player.is_dead:
+            self._draw_targeting_reticle(self.virtual_screen, self.player.x + self.player.width//2, self.player.y + self.player.height//2)
+
+        # Restored Background rendering for Combat Zones (Stars & Planets)
+        if self.state in ('PLAYING', 'PAUSED', 'GAME_OVER') and self.current_zone != 'HUB':
             for star in self.stars:
-                val = math.sin(pygame.time.get_ticks() * star[5] + star[6])
+                star_speed = star[2]
+                star_draw_y = (star[1] - self.camera_y * star_speed * 0.40) % VIRTUAL_HEIGHT
+                star_draw_x = (star[0] - self.camera_x * star_speed * 0.15) % VIRTUAL_WIDTH
+                
+                val = math.sin(ticks * star[5] + star[6])
                 alpha = int(128 + 127 * val)
                 color = tuple(max(0, min(255, int(c * (alpha / 255.0)))) for c in star[4])
-                pygame.draw.circle(self.virtual_screen, color, (int(star[0]), int(star[1])), star[3])
+                pygame.draw.circle(self.virtual_screen, color, (int(star_draw_x), int(star_draw_y)), star[3])
+
+            zone_color = BIOME_CONFIGS.get(self.current_zone, {'theme_color': GRAY})['theme_color']
+            self._draw_background_nebula(self.virtual_screen, self.camera_y, self.camera_x, zone_color)
             
-            station_center = (600, 450)
-            ticks = pygame.time.get_ticks()
+            # Render massive planet (raised center and dynamic size)
+            planet_radius = getattr(self, 'planet_radius', 800)
+            planet_y = (planet_radius + 80) - self.camera_y * 0.02
+            planet_x = VIRTUAL_WIDTH // 2
             
-            # Outer rotating shield ring
-            ring_pulse = int(5 * math.sin(ticks * 0.003))
-            pygame.draw.circle(self.virtual_screen, (0, 150, 255), station_center, 120 + ring_pulse, width=2)
+            pygame.draw.circle(self.virtual_screen, (zone_color[0] // 4, zone_color[1] // 4, zone_color[2] // 4), (int(planet_x), int(planet_y)), planet_radius + 35, width=1)
+            pygame.draw.circle(self.virtual_screen, zone_color, (int(planet_x), int(planet_y)), planet_radius, width=2)
             
-            # Struts connecting inner and outer station parts
-            for angle in range(0, 360, 60):
-                rad = math.radians(angle + ticks * 0.01)
-                sx1 = station_center[0] + int(40 * math.cos(rad))
-                sy1 = station_center[1] + int(40 * math.sin(rad))
-                sx2 = station_center[0] + int(110 * math.cos(rad))
-                sy2 = station_center[1] + int(110 * math.sin(rad))
-                pygame.draw.line(self.virtual_screen, (100, 110, 120), (sx1, sy1), (sx2, sy2), width=4)
-                pygame.draw.circle(self.virtual_screen, CYAN, (sx2, sy2), 4)
+            if getattr(self, 'planet_texture', None) is not None:
+                dim = planet_radius * 2
+                temp_planet = pygame.Surface((dim, dim), pygame.SRCALPHA)
                 
-            # Base station body
-            pygame.draw.circle(self.virtual_screen, (25, 30, 40), station_center, 100)
-            pygame.draw.circle(self.virtual_screen, SLATE_GRAY, station_center, 100, width=6)
-            pygame.draw.circle(self.virtual_screen, (10, 15, 20), station_center, 60)
+                map_width = VIRTUAL_WIDTH + 4000
+                orbit_offset = int((self.camera_x * (dim / map_width)) % dim)
+                temp_planet.blit(self.planet_texture, (-orbit_offset, 0))
+                temp_planet.blit(self.planet_texture, (dim - orbit_offset, 0))
+                
+                if getattr(self, 'planet_clouds', None) is not None:
+                    cloud_offset = int(((self.camera_x * (dim / map_width)) + (ticks * 0.04)) % dim)
+                    temp_planet.blit(self.planet_clouds, (-cloud_offset, 0))
+                    temp_planet.blit(self.planet_clouds, (dim - cloud_offset, 0))
+                if getattr(self, 'planet_mask', None) is not None:
+                    temp_planet.blit(self.planet_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+                self.virtual_screen.blit(temp_planet, (int(planet_x - planet_radius), int(planet_y - planet_radius)))
+
+            # Render imposing background structure
+            if hasattr(self, 'bg_structure'):
+                self.bg_structure.draw(self.virtual_screen, self.camera_y, self.camera_x)
+
+        # We now apply screen shake to the entire final scaled screen
+        swx, swy = 0, 0
+
+        if self.state == 'HUB' or (self.state == 'PAUSED' and self.current_zone == 'HUB'):
+            for star in self.stars:
+                val = math.sin(ticks * star[5] + star[6])
+                alpha = int(128 + 127 * val)
+                color = tuple(max(0, min(255, int(c * (alpha / 255.0)))) for c in star[4])
+                pygame.draw.circle(self.virtual_screen, color, (int(star[0] + swx), int(star[1] + swy)), star[3])
             
-            # Station inner core glow
-            core_pulse = 15 + int(5 * math.sin(ticks * 0.01))
-            pygame.draw.circle(self.virtual_screen, (0, 200, 255), station_center, core_pulse, width=2)
+            # Draw Stations (Rotating cyber-octagons)
+            stations = [
+                ((300 + swx, 450 + swy), "ENGINEERING", CYAN, (0, 100, 150)),
+                ((600 + swx, 450 + swy), "WEAPONRY", ORANGE, (150, 50, 0)),
+                ((900 + swx, 450 + swy), "SUPPLY DEPOT", GREEN, (0, 120, 0))
+            ]
             
-            station_lbl = self.font.render("DOCKING BAY", True, CYAN)
-            self.virtual_screen.blit(station_lbl, (600 - station_lbl.get_width() // 2, 435))
-            
-            player_vec = pygame.math.Vector2(self.player.rect.center)
-            if player_vec.distance_to(pygame.math.Vector2(station_center)) < 120:
-                dock_prompt = self.font.render("DOCKED: Press ESC or P to open Ship Upgrades Shop!", True, GREEN)
-                self.virtual_screen.blit(dock_prompt, (VIRTUAL_WIDTH // 2 - dock_prompt.get_width() // 2, VIRTUAL_HEIGHT - 60))
+            for center, name, color, ring_color in stations:
+                ring_pulse = int(5 * math.sin(ticks * 0.003))
+                num_sides = 8
+                outer_r = 110 + ring_pulse
+                points = []
+                for side in range(num_sides):
+                    ang = math.radians(side * (360 / num_sides) + ticks * 0.015)
+                    sx = center[0] + int(outer_r * math.cos(ang))
+                    sy = center[1] + int(outer_r * math.sin(ang))
+                    points.append((sx, sy))
+                pygame.draw.polygon(self.virtual_screen, color, points, width=1)
+                
+                points_in = []
+                inner_r = 80 - ring_pulse
+                for side in range(num_sides):
+                    ang = math.radians(side * (360 / num_sides) - ticks * 0.02)
+                    sx = center[0] + int(inner_r * math.cos(ang))
+                    sy = center[1] + int(inner_r * math.sin(ang))
+                    points_in.append((sx, sy))
+                pygame.draw.polygon(self.virtual_screen, ring_color, points_in, width=1)
+                
+                lbl = self.font.render(name, True, color)
+                self.virtual_screen.blit(lbl, (center[0] - lbl.get_width() // 2, center[1] - 15))
             
             # Dynamic Portals
             glow = int(5 * math.sin(ticks * 0.005))
@@ -2555,17 +5898,17 @@ class Game:
                     
                     order = cfg['order']
                     if order == 0:
-                        center = (600, 780)
-                        lbl_y = 690
-                        info_y = 660
+                        center = (600 + swx, 780 + swy)
+                        lbl_y = 690 + swy
+                        info_y = 660 + swy
                     elif order == 1:
-                        center = (1000, 220)
-                        lbl_y = 290
-                        info_y = 320
+                        center = (1000 + swx, 220 + swy)
+                        lbl_y = 290 + swy
+                        info_y = 320 + swy
                     else:
-                        center = (200, 220)
-                        lbl_y = 290
-                        info_y = 320
+                        center = (200 + swx, 220 + swy)
+                        lbl_y = 290 + swy
+                        info_y = 320 + swy
                         
                     pygame.draw.circle(self.virtual_screen, theme_color, center, 60 + glow, width=3)
                     pygame.draw.circle(self.virtual_screen, dark_color, center, 50)
@@ -2640,17 +5983,69 @@ class Game:
                 charge_lbl = self.font.render(f"WARPING IN {secs_left:.1f}s...", True, GREEN)
                 self.virtual_screen.blit(charge_lbl, (portal_center[0] - charge_lbl.get_width() // 2, bar_y + 18))
             
-        # ---------------- DRAW PLAYING SCROLLING COMBAT ZONE ----------------
-        elif self.state in ('PLAYING', 'PAUSED', 'GAME_OVER'):
-            for star in self.stars:
-                star_speed = star[2]
-                star_draw_y = (star[1] - self.camera_y * star_speed * 0.40) % VIRTUAL_HEIGHT
+            if self.hub_station_active and self.hub_station_active in NPC_INFO:
+                npc = NPC_INFO[self.hub_station_active]
+                # Main Dialogue Box
+                box_w = 800
+                box_h = 130
+                box_x = VIRTUAL_WIDTH // 2 - box_w // 2
+                box_y = VIRTUAL_HEIGHT - 170
                 
-                val = math.sin(pygame.time.get_ticks() * star[5] + star[6])
-                alpha = int(128 + 127 * val)
-                color = tuple(max(0, min(255, int(c * (alpha / 255.0)))) for c in star[4])
-                pygame.draw.circle(self.virtual_screen, color, (int(star[0]), int(star_draw_y)), star[3])
-
+                # Draw semi-transparent background
+                box_surf = pygame.Surface((box_w, box_h), pygame.SRCALPHA)
+                box_surf.fill((10, 10, 15, 230))
+                pygame.draw.rect(box_surf, npc['color'], (0, 0, box_w, box_h), width=2, border_radius=8)
+                self.virtual_screen.blit(box_surf, (box_x, box_y))
+                
+                # Draw character avatar box
+                avatar_size = 90
+                avatar_x = box_x + 20
+                avatar_y = box_y + 20
+                pygame.draw.rect(self.virtual_screen, (25, 25, 30), (avatar_x, avatar_y, avatar_size, avatar_size), border_radius=6)
+                pygame.draw.rect(self.virtual_screen, npc['color'], (avatar_x, avatar_y, avatar_size, avatar_size), width=1, border_radius=6)
+                
+                # Draw vector silhouette for avatar
+                pygame.draw.circle(self.virtual_screen, npc['color'], (avatar_x + avatar_size // 2, avatar_y + 35), 18, width=2)
+                pygame.draw.arc(self.virtual_screen, npc['color'], (avatar_x + 15, avatar_y + 55, avatar_size - 30, 40), 0, math.pi, width=2)
+                
+                # NPC Name & Title
+                name_lbl = self.font.render(f"{npc['name'].upper()}", True, npc['color'])
+                title_lbl = self.small_font.render(f"[{npc['title']}]", True, WHITE)
+                self.virtual_screen.blit(name_lbl, (box_x + 130, box_y + 15))
+                self.virtual_screen.blit(title_lbl, (box_x + 130 + name_lbl.get_width() + 10, box_y + 21))
+                
+                # Wrap and draw dialogue text
+                dialogue_list = npc['dialogue'].get(self.campaign_stage, ["Hello, Pilot."])
+                dialogue_idx = (ticks // 5000) % len(dialogue_list)
+                raw_text = dialogue_list[dialogue_idx]
+                formatted_text = raw_text.format(
+                    name=self.player_name if self.player_name else "PILOT",
+                    class_name=getattr(self.player, 'class_name', 'RANGER')
+                )
+                
+                words = formatted_text.split(' ')
+                lines = []
+                current_line = ""
+                for word in words:
+                    test_line = current_line + " " + word if current_line else word
+                    if self.small_font.size(test_line)[0] < box_w - 160:
+                        current_line = test_line
+                    else:
+                        lines.append(current_line)
+                        current_line = word
+                if current_line:
+                    lines.append(current_line)
+                    
+                for idx, line in enumerate(lines):
+                    line_surf = self.small_font.render(line, True, (220, 230, 245))
+                    self.virtual_screen.blit(line_surf, (box_x + 130, box_y + 50 + idx * 22))
+                    
+                # Action prompt
+                trade_prompt = self.small_font.render("Press P or ESC to Trade / Upgrade", True, GREEN)
+                self.virtual_screen.blit(trade_prompt, (box_x + box_w - trade_prompt.get_width() - 20, box_y + 15))
+            
+        # ---------------- DRAW PLAYING SCROLLING COMBAT ZONE ----------------
+        elif (self.state in ('PLAYING', 'GAME_OVER')) or (self.state == 'PAUSED' and self.current_zone != 'HUB'):
             # Draw the Wormhole gate (if active)
             if self.wormhole_spawned:
                 exit_center = (int(self.wormhole_pos.x - self.camera_x), int(self.wormhole_pos.y - self.camera_y))
@@ -2670,8 +6065,8 @@ class Game:
                     ox = exit_center[0] + int(radius * math.cos(angle))
                     oy = exit_center[1] + int(radius * math.sin(angle))
                     pygame.draw.circle(self.virtual_screen, color, (ox, oy), 4)
-                exit_lbl = self.font.render("WORMHOLE ACTIVE (Enter to Warp)", True, GREEN)
-                self.virtual_screen.blit(exit_lbl, ((self.wormhole_pos.x - self.camera_x) - exit_lbl.get_width() // 2, self.wormhole_pos.y - self.camera_y - 90))
+                exit_lbl = self.font.render("WORMHOLE ACTIVE (Enter to Warp)", True, GREEN) # No shake for text
+                self.virtual_screen.blit(exit_lbl, ((self.wormhole_pos.x - (self.camera_x + swx)) - exit_lbl.get_width() // 2, self.wormhole_pos.y - (self.camera_y + swy) - 90))
                 
                 # Draw warp charging progress HUD
                 if self.wormhole_charge_timer > 0:
@@ -2679,8 +6074,8 @@ class Game:
                     pct = min(1.0, self.wormhole_charge_timer / target_charge)
                     bar_w = 200
                     bar_h = 12
-                    bar_x = (self.wormhole_pos.x - self.camera_x) - bar_w // 2
-                    bar_y = self.wormhole_pos.y - self.camera_y + 80
+                    bar_x = (self.wormhole_pos.x - (self.camera_x + swx)) - bar_w // 2
+                    bar_y = self.wormhole_pos.y - (self.camera_y + swy) + 80
                     
                     # Background
                     pygame.draw.rect(self.virtual_screen, (44, 44, 44), (bar_x, bar_y, bar_w, bar_h), border_radius=4)
@@ -2691,60 +6086,110 @@ class Game:
                     
                     # Text countdown
                     secs_left = max(0.0, (target_charge - self.wormhole_charge_timer) / 1000.0)
-                    charge_lbl = self.font.render(f"WARPING IN {secs_left:.1f}s... STAY INSIDE!", True, GREEN)
-                    self.virtual_screen.blit(charge_lbl, ((self.wormhole_pos.x - self.camera_x) - charge_lbl.get_width() // 2, bar_y + 18))
+                    charge_lbl = self.font.render(f"WARPING IN {secs_left:.1f}s... Preparing Hyperdrive...", True, GREEN) # No shake for text
+                    self.virtual_screen.blit(charge_lbl, ((self.wormhole_pos.x - (self.camera_x + swx)) - charge_lbl.get_width() // 2, bar_y + 18))
             
             # Level Gimmicks drawing
+            for gc in self.gas_clouds:
+                gc.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+            for ad in self.ambient_debris:
+                ad.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
             for crystal in self.shield_crystals:
-                crystal.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                crystal.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
             for gw in self.gravity_wells:
-                gw.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                gw.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
 
             # Solar Flare visualization
             if self.current_zone == 'VULCAN' and self.solar_flare_state != 'IDLE':
-                draw_fy = self.solar_flare_y - self.camera_y
+                draw_fy = self.solar_flare_y - (self.camera_y + swy)
                 if self.solar_flare_state == 'WARNING':
                     if pygame.time.get_ticks() % 400 < 200:
                         pygame.draw.rect(self.virtual_screen, (255, 69, 0), (0, draw_fy, VIRTUAL_WIDTH, 120), width=4)
                         warn_text = self.font.render("!!! SOLAR FLARE DETECTED !!!", True, ORANGE)
                         self.virtual_screen.blit(warn_text, (VIRTUAL_WIDTH // 2 - warn_text.get_width() // 2, draw_fy + 45))
                 elif self.solar_flare_state == 'ACTIVE':
-                    pygame.draw.rect(self.virtual_screen, (255, 140, 0), (0, draw_fy, VIRTUAL_WIDTH, 120))
-                    pygame.draw.rect(self.virtual_screen, WHITE, (0, draw_fy + 20, VIRTUAL_WIDTH, 80))
+                    pygame.draw.rect(self.virtual_screen, (255, 140, 0), (0, draw_fy, VIRTUAL_WIDTH, 120)) # No shake here
+                    pygame.draw.rect(self.virtual_screen, WHITE, (0, draw_fy + 20, VIRTUAL_WIDTH, 80)) # No shake here
                     for _ in range(3):
                         px = random.randint(0, VIRTUAL_WIDTH)
                         py = self.solar_flare_y + random.randint(0, 120)
                         self.spawn_explosion(px, py, [(255, 69, 0), (255, 215, 0)], count=1)
 
             for bullet in self.bullets:
-                bullet.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                bullet.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
             for torpedo in self.torpedoes:
-                torpedo.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                torpedo.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+            for bomb in self.bombs:
+                bomb.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+            for missile in self.missiles:
+                missile.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
             
             # Draw enemies with optional shield highlighting
             for enemy in self.enemies:
-                enemy.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                enemy.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
                 if self.is_enemy_shielded(enemy):
-                    draw_ey = enemy.y - self.camera_y
-                    draw_ex = enemy.x - self.camera_x
+                    draw_ey = enemy.y - (self.camera_y + swy)
+                    draw_ex = enemy.x - (self.camera_x + swx)
                     pygame.draw.circle(self.virtual_screen, CYAN, (int(draw_ex + enemy.width // 2), int(draw_ey + enemy.height // 2)), enemy.width + 6, width=2)
                     
             for eb in self.enemy_bullets:
-                eb.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                eb.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
                 
             if self.boss:
-                self.boss.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                self.boss.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
                 
             for meteor in self.meteors:
-                meteor.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                meteor.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
             for obs in self.static_obstacles:
-                obs.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                obs.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+
+            if getattr(self, 'escape_sequence_active', False):
+                # Draw the massive expanding black hole
+                draw_x = self.escape_blackhole_pos.x - (self.camera_x + swx)
+                draw_y = self.escape_blackhole_pos.y - (self.camera_y + swy)
+                ticks = pygame.time.get_ticks()
+                
+                # 1. Accretion disk (outer expanding swirling ring)
+                r_outer = int(self.escape_blackhole_radius)
+                pygame.draw.circle(self.virtual_screen, (255, 69, 0), (int(draw_x), int(draw_y)), r_outer, width=8)
+                pygame.draw.circle(self.virtual_screen, (255, 140, 0), (int(draw_x), int(draw_y)), max(1, r_outer - 15), width=4)
+                
+                # Swirling particles in the accretion disk
+                for i in range(12):
+                    angle = math.radians(i * 30 + ticks * 0.04)
+                    px = draw_x + (r_outer - 30) * math.cos(angle)
+                    py = draw_y + (r_outer - 30) * math.sin(angle)
+                    pygame.draw.circle(self.virtual_screen, (255, 200, 0), (int(px), int(py)), 6)
+                
+                # 2. Outer blue energy boundary
+                r_inner = int(self.escape_blackhole_radius * 0.5)
+                if r_inner > 5:
+                    pygame.draw.circle(self.virtual_screen, (0, 100, 255), (int(draw_x), int(draw_y)), r_inner, width=5)
+                    # 3. Pure black event horizon core
+                    pygame.draw.circle(self.virtual_screen, (0, 0, 0), (int(draw_x), int(draw_y)), r_inner - 5)
+
+            for d in self.derelicts:
+                d.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+            for du in self.data_uplinks:
+                du.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+            for a in self.anomalies:
+                a.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+            for portal in self.small_portals:
+                portal.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
             for mat in self.materials:
-                mat.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                mat.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
             for scrap in self.scraps:
-                scrap.draw(self.virtual_screen, self.camera_y, self.camera_x)
+                scrap.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
             
-            self.player.draw(self.virtual_screen, self.camera_y, self.camera_x)
+            self.player.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+            
+            for ss in self.support_ships:
+                ss.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+            for dr in self.drones:
+                dr.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+
+            for flare in self.flares: # Draw flares
+                flare.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
 
             # Boss incoming overlay warning
             if self.boss and not self.boss.is_dead:
@@ -2752,14 +6197,40 @@ class Game:
                     warning_lbl = self.large_font.render("BOSS INCOMING!", True, RED)
                     self.virtual_screen.blit(warning_lbl, (VIRTUAL_WIDTH // 2 - warning_lbl.get_width() // 2, 200))
 
+            # Sector start intro overlay
+            level_time = pygame.time.get_ticks() - getattr(self, 'level_start_time', 0)
+            if self.state == 'PLAYING' and level_time < 3500:
+                intro_h = 160
+                intro_y = VIRTUAL_HEIGHT // 2 - intro_h // 2
+                overlay = pygame.Surface((VIRTUAL_WIDTH, intro_h), pygame.SRCALPHA)
+                overlay.fill((5, 5, 8, 180))
+                pygame.draw.line(overlay, (0, 255, 255, 150), (0, 0), (VIRTUAL_WIDTH, 0), 1)
+                pygame.draw.line(overlay, (0, 255, 255, 150), (0, intro_h - 1), (VIRTUAL_WIDTH, intro_h - 1), 1)
+                self.virtual_screen.blit(overlay, (0, intro_y))
+                
+                cfg = BIOME_CONFIGS.get(self.current_zone, {'name': 'Unknown Sector', 'desc': 'Hostile Environment'})
+                lbl_zone = self.large_font.render(cfg['name'].upper(), True, CYAN)
+                lbl_desc = self.font.render(f"OBJECTIVE: GATHER 5 MATRIX CORES", True, WHITE)
+                lbl_extra = self.small_font.render("SYSTEM STATUS: EXPLORATION MODE // HACK TERMINALS FOR LOOT", True, GREEN)
+                
+                self.virtual_screen.blit(lbl_zone, (VIRTUAL_WIDTH // 2 - lbl_zone.get_width() // 2, intro_y + 20))
+                self.virtual_screen.blit(lbl_desc, (VIRTUAL_WIDTH // 2 - lbl_desc.get_width() // 2, intro_y + 90))
+                self.virtual_screen.blit(lbl_extra, (VIRTUAL_WIDTH // 2 - lbl_extra.get_width() // 2, intro_y + 125))
         for particle in self.particles:
-            particle.draw(self.virtual_screen, self.camera_y if self.state == 'PLAYING' else 0, self.camera_x if self.state == 'PLAYING' else 0)
+            particle.draw(self.virtual_screen, (self.camera_y + swy) if self.state == 'PLAYING' else swy, (self.camera_x + swx) if self.state == 'PLAYING' else swx)
             
+        for sw in self.shockwaves:
+            sw.draw(self.virtual_screen, (self.camera_y + swy) if self.state == 'PLAYING' else swy, (self.camera_x + swx) if self.state == 'PLAYING' else swx)
+            
+        # Redirect drawing to dedicated UI layer
+        original_virtual_screen = self.virtual_screen
+        self.virtual_screen = self.ui_surface
+
         # Draw HUD UI
         if self.state in ('PLAYING', 'PAUSED', 'GAME_OVER', 'HUB'):
-            hud_bg = pygame.Surface((250, 125), pygame.SRCALPHA)
-            hud_bg.fill((10, 16, 26, 150))
-            pygame.draw.rect(hud_bg, (0, 255, 255, 60), (0, 0, 250, 125), width=1, border_radius=4)
+            hud_bg = pygame.Surface((250, 135), pygame.SRCALPHA)
+            hud_bg.fill((5, 5, 8, 120))
+            pygame.draw.rect(hud_bg, (0, 255, 255, 120), (0, 0, 250, 135), width=1)
             self.virtual_screen.blit(hud_bg, (5, 5))
             
             credits_text = self.font.render(f"Credits: {self.player.credits} C", True, GREEN)
@@ -2772,6 +6243,9 @@ class Game:
             self.virtual_screen.blit(zone_text, (15, 42))
             
             shield_lbl = self.small_font.render("SHIELDS:", True, CYAN)
+            self.virtual_screen.blit(shield_lbl, (15, 62))
+            
+            player_name_lbl = self.small_font.render(f"PILOT: {self.player_name}", True, WHITE)
             self.virtual_screen.blit(shield_lbl, (15, 72))
             
             shield_x = 15
@@ -2781,20 +6255,27 @@ class Game:
             for i in range(self.player.max_shields):
                 rect = pygame.Rect(shield_x + i * (segment_width + 5), shield_y, segment_width, segment_height)
                 if i < int(self.player.shields):
-                    pygame.draw.rect(self.virtual_screen, CYAN, rect, border_radius=3)
-                    pygame.draw.line(self.virtual_screen, WHITE, (rect.x + 2, rect.y + 2), (rect.x + rect.width - 3, rect.y + 2), width=1)
+                    pygame.draw.rect(self.virtual_screen, CYAN, rect)
                 elif i < self.player.shields:
                     fill_pct = self.player.shields - i
                     fill_w = int(segment_width * fill_pct)
-                    pygame.draw.rect(self.virtual_screen, (40, 40, 40), rect, border_radius=3)
-                    pygame.draw.rect(self.virtual_screen, CYAN, rect, width=1, border_radius=3)
+                    pygame.draw.rect(self.virtual_screen, (0, 60, 60), rect)
+                    pygame.draw.rect(self.virtual_screen, CYAN, rect, width=1)
                     if fill_w > 0:
                         part_rect = pygame.Rect(rect.x, rect.y, fill_w, rect.height)
-                        pygame.draw.rect(self.virtual_screen, CYAN, part_rect, border_radius=3)
-                        pygame.draw.line(self.virtual_screen, WHITE, (part_rect.x + 2, part_rect.y + 2), (part_rect.x + part_rect.width - 3, part_rect.y + 2), width=1)
+                        pygame.draw.rect(self.virtual_screen, CYAN, part_rect)
                 else:
-                    pygame.draw.rect(self.virtual_screen, (40, 40, 40), rect, border_radius=3)
-                    pygame.draw.rect(self.virtual_screen, CYAN, rect, width=1, border_radius=3)
+                    pygame.draw.rect(self.virtual_screen, (0, 40, 40), rect, width=1)
+            
+            flare_label = self.small_font.render("FLARES:", True, ORANGE)
+            self.virtual_screen.blit(flare_label, (15, 110))
+            for i in range(self.player.max_flare_ammo):
+                fx = 15 + flare_label.get_width() + 10 + i * 15
+                fy = 118
+                color = ORANGE if i < self.player.flare_ammo else (60, 40, 20)
+                pygame.draw.rect(self.virtual_screen, color, (fx - 4, fy - 4, 8, 8), width=1)
+                if i < self.player.flare_ammo:
+                    pygame.draw.rect(self.virtual_screen, WHITE, (fx - 2, fy - 2, 4, 4))
             
             # ---------------- TACTICAL MINIMAP HUD (RELATIVE SCROLLING) ----------------
             if self.state == 'PLAYING':
@@ -2803,8 +6284,8 @@ class Game:
                 mm_x = VIRTUAL_WIDTH - mm_w - 15
                 mm_y = 115
                 
-                pygame.draw.rect(self.virtual_screen, (10, 10, 15, 200), (mm_x, mm_y, mm_w, mm_h), border_radius=4)
-                pygame.draw.rect(self.virtual_screen, SLATE_GRAY, (mm_x, mm_y, mm_w, mm_h), width=2, border_radius=4)
+                pygame.draw.rect(self.virtual_screen, (5, 5, 8, 120), (mm_x, mm_y, mm_w, mm_h))
+                pygame.draw.rect(self.virtual_screen, (0, 255, 255, 120), (mm_x, mm_y, mm_w, mm_h), width=1)
                 
                 # Radar bounds checking
                 def inside_mm(mx, my):
@@ -2902,38 +6383,106 @@ class Game:
                         self.virtual_screen.blit(rot_arrow, (int(edge_x - rot_arrow.get_width() // 2), int(edge_y - rot_arrow.get_height() // 2)))
                         self.virtual_screen.blit(dist_text, (int(edge_x - dist_text.get_width() // 2), int(edge_y + 20)))
 
+            # Persistent Escape Portal Radar
+            if self.state == 'PLAYING' and self.wormhole_spawned:
+                player_pos = pygame.math.Vector2(self.player.x + self.player.width // 2, self.player.y + self.player.height // 2)
+                to_portal = self.wormhole_pos - player_pos
+                dist = to_portal.length()
+                
+                portal_screen_x = self.wormhole_pos.x - self.camera_x
+                portal_screen_y = self.wormhole_pos.y - self.camera_y
+                
+                is_offscreen = (portal_screen_x < 120 or portal_screen_x > VIRTUAL_WIDTH - 120 or
+                                portal_screen_y < 120 or portal_screen_y > VIRTUAL_HEIGHT - 120)
+                
+                if is_offscreen or dist > 200:
+                    target_dir = to_portal.normalize()
+                    margin = 90
+                    edge_x = VIRTUAL_WIDTH // 2 + target_dir.x * (VIRTUAL_WIDTH // 2 - margin)
+                    edge_y = VIRTUAL_HEIGHT // 2 + target_dir.y * (VIRTUAL_HEIGHT // 2 - margin)
+                    edge_x = max(margin, min(VIRTUAL_WIDTH - margin, edge_x))
+                    edge_y = max(margin, min(VIRTUAL_HEIGHT - margin, edge_y))
+                    
+                    angle = math.degrees(math.atan2(target_dir.y, target_dir.x))
+                    arrow_surf = pygame.Surface((50, 50), pygame.SRCALPHA)
+                    pygame.draw.polygon(arrow_surf, GREEN, [(10, 5), (42, 25), (10, 45), (20, 25)])
+                    rot_arrow = pygame.transform.rotate(arrow_surf, -angle)
+                    
+                    self.virtual_screen.blit(rot_arrow, (int(edge_x - rot_arrow.get_width() // 2), int(edge_y - rot_arrow.get_height() // 2)))
+                    dist_lbl = self.font.render(f"EXIT: {int(dist)}m", True, GREEN)
+                    self.virtual_screen.blit(dist_lbl, (int(edge_x - dist_lbl.get_width() // 2), int(edge_y + 35)))
+
+            if getattr(self, 'boss_defeated', False) and self.wormhole_spawned:
+                # Pulse red overlay on screen to indicate collapse
+                ticks = pygame.time.get_ticks()
+                pulse = int(25 + 20 * math.sin(ticks * 0.007))
+                red_overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+                red_overlay.fill((255, 0, 0, pulse))
+                self.virtual_screen.blit(red_overlay, (0, 0))
+                
+                if current_time - getattr(self, 'last_siren_play', 0) > 1000:
+                    self.last_siren_play = current_time
+                    if SOUNDS: SOUNDS.play('siren')
+                
+                # Warning text
+                warning_font = pygame.font.SysFont("Arial", 36, bold=True)
+                if getattr(self, 'escape_sequence_active', False):
+                    warning_lbl = warning_font.render("WARNING: REACTOR MELTDOWN!", True, (255, 69, 0))
+                    
+                    evac_lbl = warning_font.render("ESCAPE THE COLLAPSE TO THE PORTAL!", True, (255, 255, 255))
+                    arrow_color = GREEN
+                    
+                else:
+                    warning_lbl = warning_font.render("WARNING: SECTOR DE-STABILIZING", True, (255, 69, 0))
+                    evac_lbl = warning_font.render("EVACUATE TO PORTAL IMMEDIATELY!", True, (255, 255, 255))
+                self.virtual_screen.blit(warning_lbl, (VIRTUAL_WIDTH // 2 - warning_lbl.get_width() // 2, 220))
+                self.virtual_screen.blit(evac_lbl, (VIRTUAL_WIDTH // 2 - evac_lbl.get_width() // 2, 270))
+
             if self.state == 'PLAYING':
-                panel_w = 280
-                panel_h = 100
+                panel_w = 320
+                panel_h = 160
                 panel_x = VIRTUAL_WIDTH - panel_w - 5
                 panel_y = 5
                 
                 hud_bg = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
-                hud_bg.fill((10, 16, 26, 150))
-                pygame.draw.rect(hud_bg, (0, 255, 255, 60), (0, 0, panel_w, panel_h), width=1, border_radius=4)
+                hud_bg.fill((5, 5, 8, 120))
+                pygame.draw.rect(hud_bg, (0, 255, 255, 120), (0, 0, panel_w, panel_h), width=1)
                 self.virtual_screen.blit(hud_bg, (panel_x, panel_y))
                 
                 bar_width = 120
                 bar_height = 8
                 bar_x = panel_x + panel_w - bar_width - 15
-                current_time = pygame.time.get_ticks()
                 
-                # Torpedo
-                actual_torpedo_delay = self.player.torpedo_delay * (1.0 - 0.15 * self.player.skills['torpedo'])
-                time_since_torpedo = current_time - self.player.last_torpedo
-                cooldown_ratio = min(1.0, time_since_torpedo / actual_torpedo_delay)
+                # Secondary Weapon HUD (Torpedo, Bombs, or Missiles)
+                sec_y = panel_y + 18
+                if self.player.active_secondary == 0:
+                    actual_delay = self.player.torpedo_delay * (1.0 - 0.15 * self.player.skills['torpedo'])
+                    time_since = current_time - self.player.last_torpedo
+                    ratio = min(1.0, time_since / actual_delay)
+                    label_txt = "TORPEDO:"
+                elif self.player.active_secondary == 1:
+                    actual_delay = 500
+                    time_since = current_time - self.player.last_secondary
+                    ratio = min(1.0, time_since / actual_delay) if self.player.bomb_ammo > 0 else 0.0
+                    label_txt = f"BOMBS ({self.player.bomb_ammo}):"
+                else:
+                    actual_delay = 400
+                    time_since = current_time - self.player.last_secondary
+                    ratio = min(1.0, time_since / actual_delay) if self.player.missile_ammo > 0 else 0.0
+                    label_txt = f"MISSILES ({self.player.missile_ammo}):"
+                    
+                pygame.draw.rect(self.virtual_screen, (30, 40, 50), (bar_x, sec_y, bar_width, bar_height), border_radius=2)
+                pygame.draw.rect(self.virtual_screen, SLATE_GRAY, (bar_x, sec_y, bar_width, bar_height), width=1, border_radius=2)
+                fill_width = int(bar_width * ratio)
+                fill_color = (0, 255, 100) if ratio == 1.0 else (255, 150, 0)
+                pygame.draw.rect(self.virtual_screen, fill_color, (bar_x, sec_y, fill_width, bar_height), border_radius=2)
                 
-                torpedo_y = panel_y + 18
-                pygame.draw.rect(self.virtual_screen, (30, 40, 50), (bar_x, torpedo_y, bar_width, bar_height), border_radius=2)
-                pygame.draw.rect(self.virtual_screen, SLATE_GRAY, (bar_x, torpedo_y, bar_width, bar_height), width=1, border_radius=2)
-                fill_width = int(bar_width * cooldown_ratio)
-                fill_color = (0, 255, 100) if cooldown_ratio == 1.0 else (255, 150, 0)
-                pygame.draw.rect(self.virtual_screen, fill_color, (bar_x, torpedo_y, fill_width, bar_height), border_radius=2)
-                
-                torpedo_label = self.small_font.render("TORPEDO CAP:", True, WHITE if cooldown_ratio == 1.0 else (180, 180, 180))
-                self.virtual_screen.blit(torpedo_label, (panel_x + 15, torpedo_y - 4))
+                sec_label = self.small_font.render(label_txt, True, WHITE if ratio == 1.0 else (180, 180, 180))
+                self.virtual_screen.blit(sec_label, (panel_x + 15, sec_y - 4))
                 
                 # Laser Heat
+                # Primary Weapon Heat
+                p_names = ["LASER", "SHOTGUN", "RAILGUN"]
                 heat_y = panel_y + 46
                 pygame.draw.rect(self.virtual_screen, (30, 40, 50), (bar_x, heat_y, bar_width, bar_height), border_radius=2)
                 pygame.draw.rect(self.virtual_screen, SLATE_GRAY, (bar_x, heat_y, bar_width, bar_height), width=1, border_radius=2)
@@ -2948,7 +6497,7 @@ class Game:
                     
                 pygame.draw.rect(self.virtual_screen, heat_color, (bar_x, heat_y, heat_fill_width, bar_height), border_radius=2)
                 
-                heat_label_text = "OVERHEAT!" if self.player.overheated else "LASER HEAT:"
+                heat_label_text = "OVERHEAT!" if self.player.overheated else f"{p_names[self.player.active_primary]} HEAT:"
                 heat_label_color = RED if self.player.overheated else WHITE
                 heat_label = self.small_font.render(heat_label_text, True, heat_label_color)
                 self.virtual_screen.blit(heat_label, (panel_x + 15, heat_y - 4))
@@ -2973,22 +6522,45 @@ class Game:
                 dash_label_color = CYAN if dash_ratio == 1.0 else (160, 160, 160)
                 dash_label = self.small_font.render(dash_label_text, True, dash_label_color)
                 self.virtual_screen.blit(dash_label, (panel_x + 15, dash_y - 4))
+                
+                # Special Ability Cooldown
+                ability_y = panel_y + 102
+                pygame.draw.rect(self.virtual_screen, (30, 40, 50), (bar_x, ability_y, bar_width, bar_height), border_radius=2)
+                pygame.draw.rect(self.virtual_screen, SLATE_GRAY, (bar_x, ability_y, bar_width, bar_height), width=1, border_radius=2)
+                time_since_ability = current_time - self.player.last_ability
+                ability_ratio = min(1.0, time_since_ability / self.player.ability_cooldown)
+                ability_fill_width = int(bar_width * ability_ratio)
+                
+                ability_names = {'RANGER': 'OVERDRIVE', 'ENGINEER': 'SENTRY DRONES', 'VANGUARD': 'GUARDIAN CRYSTAL', 'SNIPER': 'PRECISION STRIKE', 'ASSASSIN': 'STEALTH CLOAK'}
+                ability_name = ability_names.get(self.player.class_name, 'SPECIAL')
+                
+                if ability_ratio == 1.0:
+                    ability_color = (0, 255, 150)
+                else:
+                    ability_color = (100, 100, 150)
+                pygame.draw.rect(self.virtual_screen, ability_color, (bar_x, ability_y, ability_fill_width, bar_height), border_radius=2)
+                
+                ability_label = self.small_font.render(f"{ability_name}:", True, WHITE if ability_ratio == 1.0 else (160, 160, 160))
+                self.virtual_screen.blit(ability_label, (panel_x + 15, ability_y - 4))
 
-            # Solar Radiation zone warnings
-            if self.state == 'PLAYING' and (self.player.x < -2000 or self.player.x > VIRTUAL_WIDTH + 2000 - self.player.width):
-                if not self.player.is_dead:
-                    rad_text = self.large_font.render("CRITICAL RADIATION DETECTED", True, RED)
-                    sub_text = self.font.render("WARNING: SOLAR FLARES ACTIVE IN DEEP SPACE. TURN BACK!", True, ORANGE)
-                    
-                    if pygame.time.get_ticks() % 600 < 300:
-                        self.virtual_screen.blit(rad_text, (VIRTUAL_WIDTH // 2 - rad_text.get_width() // 2, VIRTUAL_HEIGHT // 2 - 120))
-                    
-                    self.virtual_screen.blit(sub_text, (VIRTUAL_WIDTH // 2 - sub_text.get_width() // 2, VIRTUAL_HEIGHT // 2 - 50))
-                    
-                    pulse_alpha = int(40 + 35 * math.sin(pygame.time.get_ticks() * 0.01))
-                    vignette = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                    pygame.draw.rect(vignette, (255, 0, 0, pulse_alpha), (0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT), width=30)
-                    self.virtual_screen.blit(vignette, (0, 0))
+                # Specialist Ability Cooldown
+                special_y = panel_y + 130
+                pygame.draw.rect(self.virtual_screen, (30, 40, 50), (bar_x, special_y, bar_width, bar_height), border_radius=2)
+                pygame.draw.rect(self.virtual_screen, SLATE_GRAY, (bar_x, special_y, bar_width, bar_height), width=1, border_radius=2)
+                time_since_special = current_time - self.player.last_special
+                special_ratio = min(1.0, time_since_special / self.player.special_cooldown)
+                special_fill_width = int(bar_width * special_ratio)
+                
+                special_name = self.player.class_upgrades.get('special_name', 'SPECIALIST')
+                
+                if special_ratio == 1.0:
+                    special_color = (0, 200, 255)
+                else:
+                    special_color = (60, 100, 120)
+                pygame.draw.rect(self.virtual_screen, special_color, (bar_x, special_y, special_fill_width, bar_height), border_radius=2)
+                
+                special_label = self.small_font.render(f"{special_name}:", True, WHITE if special_ratio == 1.0 else (160, 160, 160))
+                self.virtual_screen.blit(special_label, (panel_x + 15, special_y - 4))
 
             # Boss approaching warning overlay
             if self.boss and getattr(self.boss, 'appearance_timer', 0) > 0 and not self.boss.is_dead:
@@ -3006,8 +6578,130 @@ class Game:
                 self.virtual_screen.blit(warn_lbl1, (VIRTUAL_WIDTH // 2 - warn_lbl1.get_width() // 2, banner_y + 20))
                 self.virtual_screen.blit(warn_lbl2, (VIRTUAL_WIDTH // 2 - warn_lbl2.get_width() // 2, banner_y + 85))
 
+        # Restore virtual screen for zoom processing
+        self.virtual_screen = original_virtual_screen
+
+        # 2. ZOOM PROCESSING (Apply zoom to world slice before HUD is drawn)
+        if getattr(self, 'zoom_level', 1.0) > 1.0:
+            zoom_w = int(VIRTUAL_WIDTH / self.zoom_level)
+            zoom_h = int(VIRTUAL_HEIGHT / self.zoom_level)
+            
+            px, py = self.player.rect.center
+            draw_cam_x = self.camera_x if self.state != 'HUB' else 0
+            draw_cam_y = self.camera_y if self.state != 'HUB' else 0
+            
+            px_scr = px - draw_cam_x
+            py_scr = py - draw_cam_y
+            
+            cx = max(zoom_w // 2, min(VIRTUAL_WIDTH - zoom_w // 2, px_scr))
+            cy = max(zoom_h // 2, min(VIRTUAL_HEIGHT - zoom_h // 2, py_scr))
+            
+            src_rect = pygame.Rect(cx - zoom_w // 2, cy - zoom_h // 2, zoom_w, zoom_h)
+            src_rect = src_rect.clamp(pygame.Rect(0, 0, VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+            
+            try:
+                # Capture zoomed view and stretch it back onto virtual_screen before HUD blitting
+                zoomed_view = self.virtual_screen.subsurface(src_rect).copy()
+                self.virtual_screen.fill(BLACK)
+                pygame.transform.smoothscale(zoomed_view, (VIRTUAL_WIDTH, VIRTUAL_HEIGHT), self.virtual_screen)
+            except:
+                pass
+
+        # Swap back to UI layer for overlays
+        self.virtual_screen = self.ui_surface
+
+        # Intro Overlay
+        if self.state == 'INTRO':
+            intro_time = pygame.time.get_ticks() - getattr(self, 'intro_start_time', 0)
+            self.virtual_screen.fill((5, 5, 8))
+            
+            # Phase 1: Boot sequence text
+            if intro_time < 2000:
+                lines = [
+                    "BOOTING SYSTEM KERNEL...",
+                    "MOUNTING VIRTUAL DRIVES... OK",
+                    "INITIALIZING NEURAL LINK... OK",
+                    "ESTABLISHING CONNECTION TO ZENITH NETWORK..."
+                ]
+                y_offset = 100
+                for i, line in enumerate(lines):
+                    if intro_time > i * 400:
+                        text_surf = self.small_font.render(line, True, CYAN)
+                        self.virtual_screen.blit(text_surf, (50, y_offset + i * 30))
+            
+            # Phase 2: Logo Reveal & Grid fade in
+            if intro_time >= 1500:
+                reveal_time = intro_time - 1500
+                alpha = min(255, int((reveal_time / 2000.0) * 255))
+                
+                # Draw grid
+                grid_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+                grid_spacing = 40
+                for gx_line in range(0, VIRTUAL_WIDTH, grid_spacing):
+                    pygame.draw.line(grid_surf, (0, 255, 255, 10), (gx_line, 0), (gx_line, VIRTUAL_HEIGHT))
+                for gy_line in range(0, VIRTUAL_HEIGHT, grid_spacing):
+                    pygame.draw.line(grid_surf, (0, 255, 255, 10), (0, gy_line), (VIRTUAL_WIDTH, gy_line))
+                grid_surf.set_alpha(alpha)
+                self.virtual_screen.blit(grid_surf, (0, 0))
+                
+                # Title
+                title = self.large_font.render("ZENITH", True, CYAN)
+                title_surf = pygame.Surface(title.get_size(), pygame.SRCALPHA)
+                title_surf.blit(title, (0, 0))
+                title_surf.set_alpha(alpha)
+                
+                # Glow behind title
+                glow = pygame.Surface((title.get_width() + 100, title.get_height() + 100), pygame.SRCALPHA)
+                pygame.draw.circle(glow, (0, 255, 255, alpha // 4), (glow.get_width()//2, glow.get_height()//2), 100)
+                
+                cx, cy = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
+                self.virtual_screen.blit(glow, (cx - glow.get_width()//2, cy - glow.get_height()//2 - 50))
+                self.virtual_screen.blit(title_surf, (cx - title.get_width()//2, cy - title.get_height()//2 - 50))
+                
+                # Loading Bar
+                if reveal_time > 1000:
+                    bar_w = 400
+                    bar_h = 4
+                    bar_x = cx - bar_w // 2
+                    bar_y = cy + 50
+                    progress = min(1.0, (reveal_time - 1000) / 1500.0)
+                    pygame.draw.rect(self.virtual_screen, (50, 50, 50), (bar_x, bar_y, bar_w, bar_h))
+                    pygame.draw.rect(self.virtual_screen, CYAN, (bar_x, bar_y, int(bar_w * progress), bar_h))
+                    
+                    if progress >= 1.0:
+                        ready_text = self.small_font.render("SYSTEM READY", True, WHITE)
+                        ready_text.set_alpha(int(128 + 127 * math.sin(pygame.time.get_ticks() * 0.01)))
+                        self.virtual_screen.blit(ready_text, (cx - ready_text.get_width()//2, bar_y + 20))
+
         # Main Menu overlay
-        if self.state == 'MAIN_MENU':
+        # Main Menu overlay
+        if self.state in ('MAIN_MENU', 'CLASS_SELECT'):
+            # Draw background stars (same for both)
+            for star in self.stars:
+                val = math.sin(pygame.time.get_ticks() * star[5] + star[6])
+                alpha = int(128 + 127 * val)
+                color = tuple(max(0, min(255, int(c * (alpha / 255.0)))) for c in star[4])
+                pygame.draw.circle(self.virtual_screen, color, (int(star[0]), int(star[1])), star[3])
+
+            # Nebula Background Effect: Layered transparent blobs
+            nebula_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+            ticks = pygame.time.get_ticks()
+            clouds = [
+                (PURPLE, 300, 300, 0.0002),
+                (INDIGO, 900, 600, -0.00015),
+                (MAGENTA, 200, 700, 0.0003),
+                (BLUE, 1000, 200, -0.00025)
+            ]
+            for col, bx, by, speed in clouds:
+                nx = bx + math.sin(ticks * speed) * 80
+                ny = by + math.cos(ticks * speed * 0.7) * 80
+                base_r = 220 + math.sin(ticks * 0.0004) * 30
+                for layer in range(5):
+                    alpha = int(22 / (layer + 1))
+                    lr = int(base_r * (1.0 + layer * 0.3))
+                    pygame.draw.circle(nebula_surf, (*col, alpha), (int(nx), int(ny)), lr)
+            self.virtual_screen.blit(nebula_surf, (0, 0))
+
             grid_spacing = 40
             grid_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
             for gx_line in range(0, VIRTUAL_WIDTH, grid_spacing):
@@ -3022,53 +6716,168 @@ class Game:
             pygame.draw.rect(border_surf, (0, 255, 255, 60), (10, 10, VIRTUAL_WIDTH - 20, VIRTUAL_HEIGHT - 20), width=2, border_radius=12)
             pygame.draw.rect(border_surf, (0, 255, 255, 25), (15, 15, VIRTUAL_WIDTH - 30, VIRTUAL_HEIGHT - 30), width=1, border_radius=10)
             self.virtual_screen.blit(border_surf, (0, 0))
-            
-            preview_y = VIRTUAL_HEIGHT // 2 - 120
-            self.player.x = VIRTUAL_WIDTH // 2 - self.player.width // 2
-            self.player.y = preview_y
-            self.player.draw(self.virtual_screen, camera_y=0)
-            
-            pulse = math.sin(pygame.time.get_ticks() * 0.005)
-            title_shadow = self.large_font.render("NEBULON RPG", True, (0, 30, 40))
-            self.virtual_screen.blit(title_shadow, title_shadow.get_rect(center=(VIRTUAL_WIDTH // 2 + 4, VIRTUAL_HEIGHT // 2 - 198)))
-            
-            title_color = (int(128 + 127 * pulse), 255, 255)
-            title = self.large_font.render("NEBULON RPG", True, title_color)
-            title_rect = title.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 - 200))
-            self.virtual_screen.blit(title, title_rect)
-            
-            prompt_color = WHITE if pygame.time.get_ticks() % 1000 < 500 else CYAN
-            prompt = self.font.render("Press SPACE or ENTER to Enter Hub World", True, prompt_color)
-            prompt_rect = prompt.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2))
-            self.virtual_screen.blit(prompt, prompt_rect)
-            
-            controls_box = pygame.Rect(VIRTUAL_WIDTH // 2 - 260, VIRTUAL_HEIGHT // 2 + 60, 520, 260)
-            box_surf = pygame.Surface((controls_box.width, controls_box.height), pygame.SRCALPHA)
-            box_surf.fill((10, 20, 30, 180))
-            pygame.draw.rect(box_surf, (0, 255, 255, 100), (0, 0, controls_box.width, controls_box.height), width=2, border_radius=8)
-            self.virtual_screen.blit(box_surf, (controls_box.x, controls_box.y))
-            
-            controls_title = self.font.render("CONTROLS & HOW TO PLAY:", True, CYAN)
-            self.virtual_screen.blit(controls_title, (controls_box.x + 20, controls_box.y + 15))
-            
-            controls = [
-                "W/S (or UP/DOWN)   : Thrust Forward / Reverse",
-                "A/D (or L/R keys)  : Evade Dash (on Cooldown)",
-                "MOUSE MOVEMENT     : Aim / Rotate Ship",
-                "LEFT MOUSE CLICK   : Shoot Laser (In Combat)",
-                "RIGHT MOUSE CLICK  : Heavy Torpedo (In Combat)",
-                "GOAL: Fly UP, Collect 5 Cores & Warp Out",
-                "P / ESCAPE KEY     : Open Upgrades at Space Station"
-            ]
-            for idx, text in enumerate(controls):
-                ctrl_txt = self.small_font.render(text, True, (220, 240, 255))
-                self.virtual_screen.blit(ctrl_txt, (controls_box.x + 20, controls_box.y + 50 + idx * 26))
+
+            if self.state == 'MAIN_MENU':
+                pulse = math.sin(pygame.time.get_ticks() * 0.005)
+                title_shadow = self.large_font.render("ZENITH", True, (0, 30, 40))
+                self.virtual_screen.blit(title_shadow, title_shadow.get_rect(center=(VIRTUAL_WIDTH // 2 + 4, VIRTUAL_HEIGHT // 2 - 198)))
+                
+                title_color = (int(128 + 127 * pulse), 255, 255)
+                title = self.large_font.render("ZENITH", True, title_color)
+                title_rect = title.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 - 200))
+                self.virtual_screen.blit(title, title_rect)
+                
+                # Input Callsign Box
+                input_prompt = self.font.render("ENTER PILOT CALLSIGN:", True, WHITE)
+                input_box_rect = pygame.Rect(VIRTUAL_WIDTH // 2 - 200, 350, 400, 50)
+                pygame.draw.rect(self.virtual_screen, DARK_GRAY, input_box_rect, border_radius=5)
+                
+                border_color = CYAN if self.input_active else SLATE_GRAY
+                if self.input_active and pygame.time.get_ticks() % 1000 < 500:
+                    border_color = WHITE
+                pygame.draw.rect(self.virtual_screen, border_color, input_box_rect, width=2, border_radius=5)
+                
+                self.virtual_screen.blit(input_prompt, (VIRTUAL_WIDTH // 2 - input_prompt.get_width() // 2, 300))
+                
+                name_text = self.player_name + ("|" if self.input_active and pygame.time.get_ticks() % 1000 < 500 else "")
+                name_surf = self.font.render(name_text, True, YELLOW)
+                name_rect = name_surf.get_rect(center=input_box_rect.center)
+                self.virtual_screen.blit(name_surf, name_rect)
+                
+                # Continue button
+                continue_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 100, 430, 200, 50)
+                mx, my = pygame.mouse.get_pos()
+                vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
+                vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
+                btn_color = CYAN if continue_btn.collidepoint(vmx, vmy) else BLUE
+                pygame.draw.rect(self.virtual_screen, btn_color, continue_btn, border_radius=8)
+                pygame.draw.rect(self.virtual_screen, WHITE, continue_btn, width=1, border_radius=8)
+                btn_lbl = self.font.render("CONTINUE", True, BLACK if btn_color == CYAN else WHITE)
+                self.virtual_screen.blit(btn_lbl, (continue_btn.centerx - btn_lbl.get_width() // 2, continue_btn.centery - btn_lbl.get_height() // 2))
+
+                # Controls Box
+                controls_box = pygame.Rect(VIRTUAL_WIDTH // 2 - 260, 500, 520, 360)
+                box_surf = pygame.Surface((controls_box.width, controls_box.height), pygame.SRCALPHA)
+                box_surf.fill((5, 5, 8, 120))
+                pygame.draw.rect(box_surf, (0, 255, 255, 120), (0, 0, controls_box.width, controls_box.height), width=1)
+                self.virtual_screen.blit(box_surf, (controls_box.x, controls_box.y))
+                
+                controls_title = self.font.render("CONTROLS & HOW TO PLAY:", True, CYAN)
+                self.virtual_screen.blit(controls_title, (controls_box.x + 20, controls_box.y + 15))
+                
+                controls = [
+                    "W/S (or UP/DOWN)   : Thrust Forward / Reverse",
+                    "A/D (or L/R keys)  : Evade Dash (on Cooldown)",
+                    "LEFT SHIFT         : Drop Anti-Missile Flare",
+                    "MOUSE MOVEMENT     : Aim / Rotate Ship",
+                    "LEFT MOUSE CLICK   : Shoot Primary Weapon",
+                    "RIGHT MOUSE CLICK  : Heavy Torpedo (In Combat)",
+                    "GOAL: Fly UP, Collect 5 Cores & Warp Out",
+                    "P / ESCAPE KEY     : Open Upgrades at Space Station",
+                    "Q / E              : Use Class Abilities"
+                ]
+                for idx, text in enumerate(controls):
+                    ctrl_txt = self.small_font.render(text, True, (220, 240, 255))
+                    self.virtual_screen.blit(ctrl_txt, (controls_box.x + 20, controls_box.y + 50 + idx * 30))
+
+            elif self.state == 'CLASS_SELECT':
+                mx, my = pygame.mouse.get_pos()
+                vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
+                vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
+
+                sel_lbl = self.large_font.render("SELECT SHIP CLASS", True, CYAN)
+                self.virtual_screen.blit(sel_lbl, (VIRTUAL_WIDTH // 2 - sel_lbl.get_width() // 2, 70))
+                
+                pilot_lbl = self.font.render(f"PILOT CALLSIGN: {self.player_name.upper()}", True, YELLOW)
+                self.virtual_screen.blit(pilot_lbl, (VIRTUAL_WIDTH // 2 - pilot_lbl.get_width() // 2, 150))
+                
+                classes = ['RANGER', 'ENGINEER', 'VANGUARD', 'SNIPER', 'ASSASSIN']
+                for idx, cls in enumerate(classes):
+                    btn_rect = pygame.Rect(100 + idx * 200, 220, 180, 50)
+                    is_hover = btn_rect.collidepoint(vmx, vmy)
+                    is_active = self.selected_class == cls
+                    
+                    bg_col = (40, 40, 45)
+                    if is_active:
+                        bg_col = CYAN
+                    elif is_hover:
+                        bg_col = (80, 80, 85)
+                        
+                    pygame.draw.rect(self.virtual_screen, bg_col, btn_rect, border_radius=6)
+                    pygame.draw.rect(self.virtual_screen, WHITE if is_active else SLATE_GRAY, btn_rect, width=1, border_radius=6)
+                    
+                    lbl_col = BLACK if is_active else WHITE
+                    lbl = self.font.render(cls, True, lbl_col)
+                    self.virtual_screen.blit(lbl, (btn_rect.centerx - lbl.get_width() // 2, btn_rect.centery - lbl.get_height() // 2))
+
+                # Ship Preview Box
+                prev_box = pygame.Rect(100, 310, 400, 400)
+                pygame.draw.rect(self.virtual_screen, (10, 10, 15, 180), prev_box, border_radius=8)
+                pygame.draw.rect(self.virtual_screen, CYAN, prev_box, width=1, border_radius=8)
+                
+                prev_title = self.font.render("VESSEL HULL PREVIEW", True, CYAN)
+                self.virtual_screen.blit(prev_title, (prev_box.centerx - prev_title.get_width() // 2, prev_box.y + 15))
+                
+                self.player.x = prev_box.centerx - self.player.width // 2
+                self.player.y = prev_box.centery - self.player.height // 2
+                self.player.draw(self.virtual_screen, camera_y=0)
+
+                # Class Description Box
+                desc_box = pygame.Rect(520, 310, 580, 400)
+                pygame.draw.rect(self.virtual_screen, (10, 10, 15, 180), desc_box, border_radius=8)
+                pygame.draw.rect(self.virtual_screen, CYAN, desc_box, width=1, border_radius=8)
+                
+                desc_title = self.font.render(f"CLASS SPECIFICATION: {self.selected_class}", True, YELLOW)
+                self.virtual_screen.blit(desc_title, (desc_box.x + 20, desc_box.y + 15))
+                
+                class_desc = {
+                    'RANGER': "Patrol and intercept class. Balanced stats and versatile loadout. Employs special maneuver thrusters that reduce evade dash cooldown.",
+                    'ENGINEER': "Tactical support vessel. Slow shield automatic regeneration capability. Deploys custom auxiliary repair drones and defense nodes.",
+                    'VANGUARD': "Heavy armor cruiser. Maximum plating integrity and deflection shields. Built for ramming attacks and bullet absorption.",
+                    'SNIPER': "Long-range bombardment asset. Possesses high-energy piercing weapons. Fires high-damage precision railgun bolts.",
+                    'ASSASSIN': "Infiltration model. Deploys a cloaking drive that makes the ship temporarily invisible and invulnerable, ideal for sneak attacks."
+                }
+                
+                desc_text = class_desc.get(self.selected_class, "")
+                words = desc_text.split(' ')
+                lines = []
+                curr_line = ""
+                for w in words:
+                    test_line = curr_line + " " + w if curr_line else w
+                    if self.font.size(test_line)[0] < desc_box.width - 40:
+                        curr_line = test_line
+                    else:
+                        lines.append(curr_line)
+                        curr_line = w
+                if curr_line:
+                    lines.append(curr_line)
+                    
+                for idx, line in enumerate(lines):
+                    line_surf = self.font.render(line, True, (220, 230, 245))
+                    self.virtual_screen.blit(line_surf, (desc_box.x + 20, desc_box.y + 60 + idx * 30))
+
+                # Launch Button
+                launch_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 150, 740, 300, 60)
+                pulse_amt = math.sin(pygame.time.get_ticks() * 0.01)
+                launch_color = (0, 200 + int(55 * pulse_amt), 200 + int(55 * pulse_amt))
+                if launch_btn.collidepoint(vmx, vmy):
+                    launch_color = GREEN
+                pygame.draw.rect(self.virtual_screen, launch_color, launch_btn, border_radius=8)
+                pygame.draw.rect(self.virtual_screen, WHITE, launch_btn, width=1, border_radius=8)
+                
+                launch_lbl = self.font.render("LAUNCH MISSION", True, BLACK if launch_color == GREEN else WHITE)
+                self.virtual_screen.blit(launch_lbl, (launch_btn.centerx - launch_lbl.get_width() // 2, launch_btn.centery - launch_lbl.get_height() // 2))
 
         # Pause Menu with Ship Upgrades Shop
         elif self.state == 'PAUSED':
             overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
             overlay.fill((0, 0, 0, 180))
             self.virtual_screen.blit(overlay, (0, 0))
+            
+            # Recalculate mouse positions using letterbox scale for hover effects
+            mx, my = pygame.mouse.get_pos()
+            vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
+            vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
             
             # Helper to fit text into boxes dynamically by adjusting font size
             def render_fit_text(text, color, max_w, base_font_size=15, is_bold=True):
@@ -3085,30 +6894,98 @@ class Game:
             title = self.large_font.render("GAME PAUSED", True, YELLOW)
             self.virtual_screen.blit(title, (100, 250))
             
+            # Class / Weapon Loadout Selector
+            if self.current_zone == 'HUB' and self.hub_station_active:
+                loadout_lbl = self.font.render("ACTIVE STATION LOADOUT:", True, CYAN)
+                self.virtual_screen.blit(loadout_lbl, (100, 470))
+
+                # Primary Selector
+                p_names = [getattr(self.player, 'specialist_weapon_name', 'LASER'), "SHOTGUN", "RAILGUN"]
+                for i, name in enumerate(p_names):
+                    rect = pygame.Rect(100 + i * 140, 520, 130, 50)
+                    color = GREEN if self.player.active_primary == i else (40, 40, 40)
+                    pygame.draw.rect(self.virtual_screen, color, rect, border_radius=5)
+                    pygame.draw.rect(self.virtual_screen, WHITE, rect, width=2, border_radius=5)
+                    lbl = self.small_font.render(name, True, WHITE)
+                    self.virtual_screen.blit(lbl, (rect.centerx - lbl.get_width() // 2, rect.centery - lbl.get_height() // 2))
+                
+                # Secondary Selector
+                s_names = ["TORPEDO", "MINE", "MISSILE"]
+                self.virtual_screen.blit(self.small_font.render("SECONDARY WEAPON:", True, WHITE), (100, 650))
+                for i, name in enumerate(s_names):
+                    rect = pygame.Rect(100 + i * 140, 680, 130, 50)
+                    color = GOLD if self.player.active_secondary == i else (40, 40, 40)
+                    pygame.draw.rect(self.virtual_screen, color, rect, border_radius=5)
+                    pygame.draw.rect(self.virtual_screen, WHITE, rect, width=2, border_radius=5)
+                    lbl = self.small_font.render(name, True, WHITE)
+                    self.virtual_screen.blit(lbl, (rect.centerx - lbl.get_width() // 2, rect.centery - lbl.get_height() // 2))
+
+                resume_y = 350
+                quit_y = 410
+            else:
+                resume_y = 350
+                quit_y = 410
+                
             resume = self.font.render("Press ESC or P to Resume", True, WHITE)
             self.virtual_screen.blit(resume, (100, 350))
+            self.virtual_screen.blit(resume, (100, resume_y))
             
             quit_lbl = self.font.render("Press M to Quit to Main Menu", True, RED)
             self.virtual_screen.blit(quit_lbl, (100, 410))
+            self.virtual_screen.blit(quit_lbl, (100, quit_y))
             
             pygame.draw.line(self.virtual_screen, SLATE_GRAY, (600, 150), (600, 800), 2)
             
-            if self.current_zone != 'HUB':
-                tree_title = self.large_font.render("UPGRADES LOCKED", True, RED)
+            if self.current_zone != 'HUB' or not self.hub_station_active:
+                tree_title = self.large_font.render("COMMUNICATIONS LINK...", True, RED)
                 self.virtual_screen.blit(tree_title, (650, 250))
-                
+
                 sp_text = self.font.render("Ship upgrades are only available at the Space Station Hub.", True, WHITE)
                 self.virtual_screen.blit(sp_text, (650, 330))
-                
+
                 wallet_lbl1 = self.font.render(f"Wallet: {self.player.credits} Credits", True, GREEN)
                 self.virtual_screen.blit(wallet_lbl1, (650, 380))
                 wallet_lbl2 = self.font.render(f"  |  {self.player.scraps} Scrap", True, GOLD)
                 self.virtual_screen.blit(wallet_lbl2, (650 + wallet_lbl1.get_width(), 380))
-                
+
                 hint_lbl = self.small_font.render("Safely return to Hub via Warp Portals to upgrade equipment.", True, YELLOW)
                 self.virtual_screen.blit(hint_lbl, (650, 430))
+            elif self.hub_station_active == 'SUPPLY':
+                tree_title = self.large_font.render("SUPPLY DEPOT", True, GREEN)
+                self.virtual_screen.blit(tree_title, (650, 100))
+                
+                wallet_lbl = self.font.render(f"Credits: {self.player.credits}", True, GREEN)
+                self.virtual_screen.blit(wallet_lbl, (650, 170))
+                
+                owned_list = [self.player.has_mod_piercing, self.player.has_mod_split, self.player.has_mod_siphon]
+                items = [
+                    ('Shield Repair', 75, f"Restore 1 unit of shield. Current: {self.player.shields}/{self.player.max_shields}"),
+                    ('Torpedo Refill', 100, f"Full ammo reload. Current: {self.player.torpedo_ammo}"),
+                    ('Bomb Refill', 150, f"Full ammo reload. Current: {self.player.bomb_ammo}"),
+                    ('Missile Refill', 200, f"Full ammo reload. Current: {self.player.missile_ammo}"),
+                    ('Flare Refill', 50, f"Full ammo reload. Current: {self.player.flare_ammo}"),
+                    ('Mod: Piercing Rounds', 300, f"Lasers pierce through 1 target. (Mod Slot)"),
+                    ('Mod: Split Shot', 400, f"Fires 2 extra diagonal side lasers. (Mod Slot)"),
+                    ('Mod: Shield Siphon', 350, f"Siphons 0.05 shield points on laser hit. (Mod Slot)")
+                ]
+                for i, (name, cost, desc) in enumerate(items):
+                    rect = pygame.Rect(650, 210 + i * 80, 480, 68)
+                    color = (20, 30, 40)
+                    if rect.collidepoint(vmx, vmy): color = (40, 50, 60)
+                    pygame.draw.rect(self.virtual_screen, color, rect, border_radius=5)
+                    pygame.draw.rect(self.virtual_screen, GREEN, rect, width=1, border_radius=5)
+                    
+                    self.virtual_screen.blit(self.font.render(name, True, WHITE), (rect.x + 15, rect.y + 10))
+                    self.virtual_screen.blit(self.small_font.render(desc, True, GRAY), (rect.x + 15, rect.y + 35))
+                    
+                    is_owned_mod = (i >= 5 and owned_list[i-5])
+                    if is_owned_mod:
+                        cost_lbl = self.font.render("OWNED", True, GOLD)
+                    else:
+                        cost_lbl = self.font.render(f"{cost} C", True, GREEN if self.player.credits >= cost else RED)
+                    self.virtual_screen.blit(cost_lbl, (rect.right - cost_lbl.get_width() - 15, rect.y + 15))
             else:
-                tree_title = self.large_font.render("SHIP PARTS SHOP", True, CYAN)
+                tree_title = self.large_font.render(f"{self.hub_station_active}", True, CYAN)
                 self.virtual_screen.blit(tree_title, (650, 100))
                 
                 sp_text1 = self.font.render(f"Your Wallet: {self.player.credits} Credits", True, GREEN)
@@ -3116,120 +6993,176 @@ class Game:
                 sp_text2 = self.font.render(f"  |  {self.player.scraps} Scrap", True, GOLD)
                 self.virtual_screen.blit(sp_text2, (650 + sp_text1.get_width(), 175))
                 
-                # Recalculate mouse positions using letterbox scale
-                mx, my = pygame.mouse.get_pos()
-                vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
-                vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
-                
                 # Define Tech Tree nodes
                 nodes_info = {
                     'shield': {
                         'name': 'Shield Generator',
                         'desc': 'Upgrade hull capacitors to absorb more energy (+1 Max Shield per rank).',
-                        'col': 1, 'row': 1, 'max_level': 4,
+                        'col': 1, 'row': 1, 'max_level': 4, 'deps': [], 'type': 'ENGINEERING',
                         'cost': (self.player.skills['shield'] + 1) * 75,
-                        'scrap_cost': (self.player.skills['shield'] + 1) * 2,
-                        'deps': []
+                        'scrap_cost': (self.player.skills['shield'] + 1) * 1
                     },
                     'deflector': {
                         'name': 'Deflector Shield',
                         'desc': 'Unlock a passive shield deflector that reduces shield recharge delay from 5s to 3s.',
-                        'col': 2, 'row': 1, 'max_level': 1,
-                        'cost': 200,
-                        'scrap_cost': 5,
-                        'deps': [('shield', 2)]
+                        'col': 1, 'row': 2, 'max_level': 1, 'deps': [('shield', 2)], 'type': 'ENGINEERING',
+                        'cost': 200, 'scrap_cost': 3
                     },
                     'coolant': {
                         'name': 'Thermal Coolant',
                         'desc': 'Install cryogenic liquid heatsinks (+25% faster weapon cool-down rate per rank).',
-                        'col': 1, 'row': 2, 'max_level': 4,
+                        'col': 2, 'row': 1, 'max_level': 4, 'deps': [], 'type': 'ENGINEERING',
                         'cost': (self.player.skills['coolant'] + 1) * 60,
-                        'scrap_cost': (self.player.skills['coolant'] + 1) * 2,
-                        'deps': []
-                    },
-                    'weapon': {
-                        'name': 'Multi-Cannon',
-                        'desc': 'Modify weapon mount slots to unlock fire configurations (Dual -> Spreading Triple).',
-                        'col': 2, 'row': 2, 'max_level': 2,
-                        'cost': 200 if self.player.skills['weapon'] == 0 else 400,
-                        'scrap_cost': 8 if self.player.skills['weapon'] == 0 else 15,
-                        'deps': [('coolant', 1)]
-                    },
-                    'overcharge': {
-                        'name': 'Overcharged Cap',
-                        'desc': 'Overclock gun firing rate (reduces standard laser shoot delay by 30%).',
-                        'col': 3, 'row': 2, 'max_level': 1,
-                        'cost': 250,
-                        'scrap_cost': 8,
-                        'deps': [('weapon', 1)]
-                    },
-                    'torpedo': {
-                        'name': 'Fusion Torpedo',
-                        'desc': 'Upgrade heavy torpedo systems (-15% cooldown and +15% explosion size per rank).',
-                        'col': 1, 'row': 3, 'max_level': 4,
-                        'cost': (self.player.skills['torpedo'] + 1) * 80,
-                        'scrap_cost': (self.player.skills['torpedo'] + 1) * 2,
-                        'deps': []
-                    },
-                    'cluster_torpedo': {
-                        'name': 'Cluster Warhead',
-                        'desc': 'Modify torpedo shell casings to trigger 3 smaller secondary sub-explosions upon detonation.',
-                        'col': 2, 'row': 3, 'max_level': 1,
-                        'cost': 300,
-                        'scrap_cost': 10,
-                        'deps': [('torpedo', 2)]
+                        'scrap_cost': (self.player.skills['coolant'] + 1) * 1
                     },
                     'hyperdrive': {
                         'name': 'Hyperdrive Core',
                         'desc': 'Assemble hyper-dense tachyonic fields to speed up warp charging (reduces warp delay from 3s to 1s).',
-                        'col': 1, 'row': 4, 'max_level': 1,
+                        'col': 2, 'row': 2, 'max_level': 1, 'deps': [('shield', 2), ('coolant', 2)], 'type': 'ENGINEERING',
+                        'cost': 350, 'scrap_cost': 6
+                    },
+                    'class_tier1': {
+                        'name': self.player.class_upgrades.get('tier1_name', 'Class Upgrade I'),
+                        'desc': self.player.class_upgrades.get('tier1_desc', 'Upgrade class-specific traits.'),
+                        'col': 3, 'row': 1, 'max_level': 3, 'deps': [], 'type': 'ENGINEERING',
+                        'cost': (self.player.skills['class_tier1'] + 1) * 120,
+                        'scrap_cost': (self.player.skills['class_tier1'] + 1) * 2
+                    },
+                    'class_tier2': {
+                        'name': self.player.class_upgrades.get('tier2_name', 'Class Upgrade II'),
+                        'desc': self.player.class_upgrades.get('tier2_desc', 'Upgrade class-specific traits.'),
+                        'col': 3, 'row': 2, 'max_level': 2, 'deps': [('class_tier1', 1)], 'type': 'ENGINEERING',
+                        'cost': (self.player.skills['class_tier2'] + 1) * 180,
+                        'scrap_cost': (self.player.skills['class_tier2'] + 1) * 3
+                    },
+                    'class_tier3': {
+                        'name': self.player.class_upgrades.get('tier3_name', 'Class Upgrade III'),
+                        'desc': self.player.class_upgrades.get('tier3_desc', 'Upgrade class-specific traits.'),
+                        'col': 3, 'row': 3, 'max_level': 1, 'deps': [('class_tier2', 1)], 'type': 'ENGINEERING',
                         'cost': 350,
-                        'scrap_cost': 12,
-                        'deps': [('shield', 2), ('coolant', 2)]
+                        'scrap_cost': 5
+                    },
+                    'weapon': {
+                        'name': 'Laser Multi-Cannon',
+                        'desc': 'Upgrade the base Laser Cannon to unlock dual fire mode.',
+                        'col': 1, 'row': 1, 'max_level': 1, 'deps': [], 'type': 'WEAPONRY',
+                        'cost': 200,
+                        'scrap_cost': 4
+                    },
+                    'overcharge': {
+                        'name': 'Laser Overcharger',
+                        'desc': 'Overclock the Laser fire rate (reduces standard shoot delay by 30%).',
+                        'col': 1, 'row': 2, 'max_level': 1, 'deps': [('weapon', 1)], 'type': 'WEAPONRY',
+                        'cost': 250, 'scrap_cost': 4
+                    },
+                    'shotgun_unlocked': {
+                        'name': 'Buy Shotgun',
+                        'desc': 'Unlock the high-impact CQC Scatter Shotgun primary weapon.',
+                        'col': 1, 'row': 3, 'max_level': 1, 'deps': [], 'type': 'WEAPONRY',
+                        'cost': 300, 'scrap_cost': 5
+                    },
+                    'shotgun_mod': {
+                        'name': 'Shotgun Tuning',
+                        'desc': 'Improve shotgun heatsinks and shell damage (+15% stats per rank).',
+                        'col': 1, 'row': 4, 'max_level': 3, 'deps': [('shotgun_unlocked', 1)], 'type': 'WEAPONRY',
+                        'cost': (self.player.skills['shotgun_mod'] + 1) * 100, 'scrap_cost': (self.player.skills['shotgun_mod'] + 1) * 2
+                    },
+                    'railgun_unlocked': {
+                        'name': 'Buy Railgun',
+                        'desc': 'Unlock the long-range piercing Tachyonic Railgun primary weapon.',
+                        'col': 2, 'row': 1, 'max_level': 1, 'deps': [], 'type': 'WEAPONRY',
+                        'cost': 500, 'scrap_cost': 10
+                    },
+                    'railgun_mod': {
+                        'name': 'Railgun Tuning',
+                        'desc': 'Reduce the Railgun charge delay and increase projectile velocity.',
+                        'col': 2, 'row': 2, 'max_level': 3, 'deps': [('railgun_unlocked', 1)], 'type': 'WEAPONRY',
+                        'cost': (self.player.skills['railgun_mod'] + 1) * 150, 'scrap_cost': (self.player.skills['railgun_mod'] + 1) * 4
+                    },
+                    'torpedo': {
+                        'name': 'Fusion Torpedo',
+                        'desc': 'Upgrade heavy torpedo systems (-15% cooldown and +15% explosion size per rank).',
+                        'col': 2, 'row': 3, 'max_level': 4, 'deps': [], 'type': 'WEAPONRY',
+                        'cost': (self.player.skills['torpedo'] + 1) * 80,
+                        'scrap_cost': (self.player.skills['torpedo'] + 1) * 1
+                    },
+                    'cluster_torpedo': {
+                        'name': 'Cluster Warhead',
+                        'desc': 'Modify torpedo shell casings to trigger 3 smaller secondary sub-explosions upon detonation.',
+                        'col': 2, 'row': 4, 'max_level': 1, 'deps': [('torpedo', 2)], 'type': 'WEAPONRY',
+                        'cost': 300, 'scrap_cost': 5
+                    },
+                    'bomb_unlocked': {
+                        'name': 'Buy Proxy Bomb',
+                        'desc': 'Unlock the Proximity-fused Detonation Bomb secondary weapon.',
+                        'col': 3, 'row': 1, 'max_level': 1, 'deps': [], 'type': 'WEAPONRY',
+                        'cost': 200, 'scrap_cost': 3
+                    },
+                    'bomb_cap': {
+                        'name': 'Bomb Payload',
+                        'desc': 'Increase Bomb max capacity and explosion radius per rank.',
+                        'col': 3, 'row': 2, 'max_level': 3, 'deps': [('bomb_unlocked', 1)], 'type': 'WEAPONRY',
+                        'cost': (self.player.skills['bomb_cap'] + 1) * 80, 'scrap_cost': (self.player.skills['bomb_cap'] + 1) * 2
+                    },
+                    'missile_unlocked': {
+                        'name': 'Buy Homing Missile',
+                        'desc': 'Unlock the Smart-Targeting Homing Missile secondary weapon.',
+                        'col': 3, 'row': 3, 'max_level': 1, 'deps': [], 'type': 'WEAPONRY',
+                        'cost': 400, 'scrap_cost': 7
+                    },
+                    'missile_cap': {
+                        'name': 'Missile Payload',
+                        'desc': 'Increase Missile max capacity and flight speed per rank.',
+                        'col': 3, 'row': 4, 'max_level': 3, 'deps': [('missile_unlocked', 1)], 'type': 'WEAPONRY',
+                        'cost': (self.player.skills['missile_cap'] + 1) * 120, 'scrap_cost': (self.player.skills['missile_cap'] + 1) * 3
                     }
                 }
 
                 hovered_key = None
                 for key, node in nodes_info.items():
+                    if node['type'] != self.hub_station_active: continue
                     node_x = 630 + (node['col'] - 1) * 180
-                    node_y = 210 + (node['row'] - 1) * 100
-                    rect = pygame.Rect(node_x, node_y, 160, 80)
+                    node_y = 210 + (node['row'] - 1) * 90
+                    rect = pygame.Rect(node_x, node_y, 160, 75)
                     if rect.collidepoint(vmx, vmy):
                         hovered_key = key
                         
                 # 1. Draw dependency lines first
                 for key, node in nodes_info.items():
+                    if node['type'] != self.hub_station_active: continue
                     node_x = 630 + (node['col'] - 1) * 180
-                    node_y = 210 + (node['row'] - 1) * 100
+                    node_y = 210 + (node['row'] - 1) * 90
                     
                     for dep_key, req_lvl in node['deps']:
+                        if dep_key not in nodes_info or nodes_info[dep_key]['type'] != self.hub_station_active: continue
                         dep_node = nodes_info[dep_key]
                         dep_x = 630 + (dep_node['col'] - 1) * 180
-                        dep_y = 210 + (dep_node['row'] - 1) * 100
+                        dep_y = 210 + (dep_node['row'] - 1) * 90
                         
                         met = self.player.skills[dep_key] >= req_lvl
                         line_color = GREEN if met else (100, 30, 30)
                         
                         if dep_node['col'] == node['col']:
                             # Vertical connection
-                            start_pos = (dep_x + 80, dep_y + 80)
+                            start_pos = (dep_x + 80, dep_y + 75)
                             end_pos = (node_x + 80, node_y)
                         else:
                             # Horizontal or diagonal connection
-                            start_pos = (dep_x + 160, dep_y + 40)
-                            end_pos = (node_x, node_y + 40)
+                            start_pos = (dep_x + 160, dep_y + 37)
+                            end_pos = (node_x, node_y + 37)
                             
-                        pygame.draw.line(self.virtual_screen, line_color, start_pos, end_pos, width=3)
+                        pygame.draw.line(self.virtual_screen, line_color, start_pos, end_pos, width=1)
                         
                         mid_x = (start_pos[0] + end_pos[0]) // 2
                         mid_y = (start_pos[1] + end_pos[1]) // 2
-                        pygame.draw.circle(self.virtual_screen, line_color, (mid_x, mid_y), 4)
+                        pygame.draw.circle(self.virtual_screen, line_color, (mid_x, mid_y), 3, width=1)
 
                 # 2. Draw nodes
                 for key, node in nodes_info.items():
+                    if node['type'] != self.hub_station_active: continue
                     node_x = 630 + (node['col'] - 1) * 180
-                    node_y = 210 + (node['row'] - 1) * 100
-                    rect = pygame.Rect(node_x, node_y, 160, 80)
+                    node_y = 210 + (node['row'] - 1) * 90
+                    rect = pygame.Rect(node_x, node_y, 160, 75)
                     
                     unlocked = True
                     for dep_key, req_lvl in node['deps']:
@@ -3258,8 +7191,8 @@ class Game:
                     elif curr_lvl > 0:
                         border_color = CYAN
                     
-                    pygame.draw.rect(self.virtual_screen, bg_color, rect, border_radius=6)
-                    pygame.draw.rect(self.virtual_screen, border_color, rect, width=border_width, border_radius=6)
+                    pygame.draw.rect(self.virtual_screen, bg_color, rect)
+                    pygame.draw.rect(self.virtual_screen, border_color, rect, width=border_width)
                     
                     title_lbl = render_fit_text(node['name'], WHITE if unlocked else (180, 120, 120), 140, base_font_size=15)
                     self.virtual_screen.blit(title_lbl, (node_x + 10, node_y + 12))
@@ -3338,78 +7271,376 @@ class Game:
 
         # Game Over Overlay
         elif self.state == 'GAME_OVER':
+            go_time = pygame.time.get_ticks() - getattr(self, 'game_over_start_time', 0)
+            
+            # Darkening overlay
             overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-            overlay.fill((0, 0, 0, 180))
+            alpha = min(220, int(go_time / 10))
+            overlay.fill((10, 0, 0, alpha))
             self.virtual_screen.blit(overlay, (0, 0))
             
-            msg = self.large_font.render("GAME OVER", True, RED)
-            msg_rect = msg.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 - 50))
-            self.virtual_screen.blit(msg, msg_rect)
+            if go_time > 1000:
+                msg_y = VIRTUAL_HEIGHT // 2 - 150
+                msg = self.large_font.render("SIGNAL LOST", True, RED)
+                
+                # Glitch effect for text
+                if random.random() < 0.15:
+                    glitch_offset = random.randint(-15, 15)
+                    msg_rect = msg.get_rect(center=(VIRTUAL_WIDTH // 2 + glitch_offset, msg_y))
+                else:
+                    msg_rect = msg.get_rect(center=(VIRTUAL_WIDTH // 2, msg_y))
+                
+                self.virtual_screen.blit(msg, msg_rect)
+                
+                # Floating debris/embers
+                ship_x, ship_y = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
+                for i in range(20):
+                    dx = ship_x + math.sin(go_time * 0.001 + i) * (go_time * 0.05 + 80)
+                    dy = ship_y + math.cos(go_time * 0.0015 + i) * (go_time * 0.05 + 80)
+                    pygame.draw.circle(self.virtual_screen, (150, 40, 40), (int(dx), int(dy)), 2 + i % 3)
+                
+                # Draw shattered/dead ship silhouette rotating slowly
+                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 0, 1, scale=1.5, damaged=True, thruster_intensity=0.0, rotation_angle=go_time*0.02)
             
-            retry_msg = self.font.render("Press R to Restart", True, WHITE)
-            retry_rect = retry_msg.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 + 50))
-            self.virtual_screen.blit(retry_msg, retry_rect)
-            
-            menu_msg = self.font.render("Press M for Main Menu", True, CYAN)
-            menu_rect = menu_msg.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 + 100))
-            self.virtual_screen.blit(menu_msg, menu_rect)
-            
+            if go_time > 3000:
+                prompt_alpha = min(255, int((go_time - 3000) / 4))
+                
+                retry_msg = self.font.render("[ R ] REBOOT SYSTEM", True, WHITE)
+                retry_msg.set_alpha(prompt_alpha)
+                retry_rect = retry_msg.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 + 120))
+                self.virtual_screen.blit(retry_msg, retry_rect)
+                
+                menu_msg = self.font.render("[ M ] MAIN MENU", True, CYAN)
+                menu_msg.set_alpha(prompt_alpha)
+                menu_rect = menu_msg.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 + 180))
+                self.virtual_screen.blit(menu_msg, menu_rect)
+                
         # Victory Overlay
         elif self.state == 'VICTORY':
-            overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-            overlay.fill((0, 20, 40, 200)) # Dark blue-ish background
-            self.virtual_screen.blit(overlay, (0, 0))
+            v_time = current_time - self.victory_start_time
             
-            # Spawn some victory sparks/fireworks dynamically for rich aesthetics!
-            for _ in range(5):
-                fx = random.randint(0, VIRTUAL_WIDTH)
-                fy = random.randint(0, VIRTUAL_HEIGHT)
-                fcolor = random.choice([CYAN, GREEN, YELLOW, ORANGE, PURPLE])
-                pygame.draw.circle(self.virtual_screen, fcolor, (fx, fy), random.randint(3, 10))
+            if v_time < 5000:
+                # PHASE 1: Galaxy Liberation
+                self.virtual_screen.fill((5, 10, 20))
+                
+                # Draw soft galaxy nebula glow in background
+                nebula_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+                pygame.draw.circle(nebula_surf, (30, 15, 60, 40), (VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 2), 400)
+                pygame.draw.circle(nebula_surf, (15, 45, 75, 40), (2 * VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 3), 500)
+                self.virtual_screen.blit(nebula_surf, (0, 0))
+                
+                # Draw mini-map of sectors with glowing effects
+                for i, (name, cfg) in enumerate(BIOME_CONFIGS.items()):
+                    cx = 200 + (i % 3) * 400
+                    cy = 200 + (i // 3) * 250
+                    color = cfg['theme_color']
+                    pulse = abs(math.sin(current_time * 0.005 + i)) * 12
+                    
+                    # Outer glow
+                    glow_surf = pygame.Surface((120, 120), pygame.SRCALPHA)
+                    pygame.draw.circle(glow_surf, (color[0], color[1], color[2], 30 + int(pulse * 1.5)), (60, 60), 40 + int(pulse))
+                    self.virtual_screen.blit(glow_surf, (cx - 60, cy - 60))
+                    
+                    # Main ring and core
+                    pygame.draw.circle(self.virtual_screen, color, (cx, cy), 30, width=2)
+                    pygame.draw.circle(self.virtual_screen, (255, 255, 255), (cx, cy), 4)
+                    
+                    # Lens flare lines
+                    pygame.draw.line(self.virtual_screen, (color[0], color[1], color[2], 120), (cx - 45, cy), (cx + 45, cy), width=1)
+                    pygame.draw.line(self.virtual_screen, (color[0], color[1], color[2], 120), (cx, cy - 45), (cx, cy + 45), width=1)
+                
+                # Player ship flies across the galaxy
+                ship_x = -100 + (v_time / 5000.0) * (VIRTUAL_WIDTH + 200)
+                ship_y = VIRTUAL_HEIGHT // 2 + math.sin(v_time * 0.002) * 100
+                
+                # Engine spark particles trailing behind
+                for _ in range(3):
+                    sp_x = ship_x - 30 - random.randint(0, 40)
+                    sp_y = ship_y + random.randint(-15, 15)
+                    sp_r = random.randint(2, 6)
+                    cls = self.player.class_name if (hasattr(self, 'player') and self.player) else 'RANGER'
+                    sp_color = (0, 255, 255, 150) if cls == 'RANGER' else (255, 120, 0, 150)
+                    sp_surf = pygame.Surface((sp_r*2, sp_r*2), pygame.SRCALPHA)
+                    pygame.draw.circle(sp_surf, sp_color, (sp_r, sp_r), sp_r)
+                    self.virtual_screen.blit(sp_surf, (int(sp_x - sp_r), int(sp_y - sp_r)))
+                
+                # Render the user's completed ship
+                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 1.0, 0.0, scale=1.0, thruster_intensity=1.2)
+                
+                msg = self.large_font.render("GALAXY LIBERATED", True, WHITE)
+                self.virtual_screen.blit(msg, (VIRTUAL_WIDTH//2 - msg.get_width()//2, 50))
+
+            elif v_time < 9000:
+                # PHASE 2: Hyper-jump Failure
+                warp_progress = (v_time - 5000) / 4000.0
+                self.virtual_screen.fill(BLACK)
+                
+                # Warp star tunnel effect
+                center_x, center_y = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
+                random.seed(42)  # Seed to keep the star trajectory layout consistent
+                for j in range(60):
+                    angle = (j * 13.7) % (2 * math.pi)
+                    speed = 10 + (j % 15) * 5
+                    dist = ((v_time * 0.15 * speed) + j * 50) % 800
+                    if dist < 20: continue
+                    sx1 = center_x + math.cos(angle) * (dist - speed * 1.5)
+                    sy1 = center_y + math.sin(angle) * (dist - speed * 1.5)
+                    sx2 = center_x + math.cos(angle) * dist
+                    sy2 = center_y + math.sin(angle) * dist
+                    pygame.draw.line(self.virtual_screen, (200, 220, 255), (int(sx1), int(sy1)), (int(sx2), int(sy2)), width=max(1, int(dist * 0.005)))
+                random.seed()  # Reset seed
+                
+                # Draw player ship in the middle shaking violently
+                ship_x = center_x + random.randint(-8, 8)
+                ship_y = center_y + random.randint(-8, 8)
+                
+                # Reactor critical effects (sparks erupting from engine)
+                for _ in range(4):
+                    sp_x = ship_x - 30 - random.randint(0, 30)
+                    sp_y = ship_y + random.randint(-15, 15)
+                    pygame.draw.circle(self.virtual_screen, RED if random.random() > 0.5 else ORANGE, (int(sp_x), int(sp_y)), random.randint(3, 8))
+                
+                # Draw the actual ship
+                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 1.0, 0.0, scale=1.1, thruster_intensity=0.8)
+                
+                # Visual Glitches & Alarms
+                if v_time % 300 < 150:
+                    alert_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+                    alert_surf.fill((255, 0, 0, 60))
+                    self.virtual_screen.blit(alert_surf, (0, 0))
+                    warn = self.large_font.render("REACTOR CRITICAL", True, RED)
+                    self.virtual_screen.blit(warn, (VIRTUAL_WIDTH//2 - warn.get_width()//2, VIRTUAL_HEIGHT//2 - 120))
+                    
+                    system_fail = self.font.render("HYPERDRIVE CORE FAILURE - EMERGENCY EJECT", True, WHITE)
+                    self.virtual_screen.blit(system_fail, (VIRTUAL_WIDTH//2 - system_fail.get_width()//2, VIRTUAL_HEIGHT//2 + 100))
+                
+                self.screen_shake = 12
+
+            elif v_time < 13000:
+                # PHASE 3: Atmospheric Entry
+                entry_time = v_time - 9000
+                # Draw burning dark green sky
+                self.virtual_screen.fill((30, 48, 36))
+                
+                # Moving fire/ash clouds rushing upwards
+                for i in range(12):
+                    offset = (entry_time * 1.5 + i * 150) % VIRTUAL_HEIGHT
+                    cloud_w = 400 + (i % 3) * 200
+                    cloud_h = 80 + (i % 2) * 40
+                    cloud_x = (i * 130) % VIRTUAL_WIDTH - cloud_w // 2
+                    cloud_color = (60, 45, 35, 100) if i % 2 == 0 else (45, 65, 50, 100)
+                    cloud_surf = pygame.Surface((cloud_w, cloud_h), pygame.SRCALPHA)
+                    pygame.draw.ellipse(cloud_surf, cloud_color, (0, 0, cloud_w, cloud_h))
+                    self.virtual_screen.blit(cloud_surf, (cloud_x, VIRTUAL_HEIGHT - offset))
+                
+                # Downward streaking ship with fire
+                ship_x = VIRTUAL_WIDTH // 2 + math.sin(v_time * 0.05) * 20
+                ship_y = 100 + (entry_time / 4000.0) * 600
+                
+                # Glowing heat shield/plasma layer at the nose of the ship
+                heat_surf = pygame.Surface((120, 120), pygame.SRCALPHA)
+                for r in range(3):
+                    glow_r = 25 + r * 15 + random.randint(-5, 5)
+                    glow_alpha = 150 - r * 40
+                    pygame.draw.circle(heat_surf, (255, 100 + r * 50, 0, glow_alpha), (60, 60), glow_r)
+                self.virtual_screen.blit(heat_surf, (int(ship_x - 60), int(ship_y + 10)))
+                
+                # Trailing fire and sparks shooting upward
+                for _ in range(8):
+                    fx = ship_x + random.randint(-25, 25)
+                    fy = ship_y - random.randint(10, 120)
+                    f_size = random.randint(6, 20)
+                    pygame.draw.circle(self.virtual_screen, (255, random.randint(100, 200), 0), (int(fx), int(fy)), f_size)
+                    
+                # Streaking friction lines
+                for _ in range(15):
+                    lx = random.randint(0, VIRTUAL_WIDTH)
+                    ly = random.randint(0, VIRTUAL_HEIGHT)
+                    llen = random.randint(60, 250)
+                    pygame.draw.line(self.virtual_screen, (255, 200, 100, 80), (lx, ly), (lx, ly - llen), width=1)
+                
+                # Draw the actual ship pointing DOWN: direction (0.0, 1.0)
+                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 0.0, 1.0, scale=1.0, damaged=False, thruster_intensity=0.0)
+                
+                # Draw atmospheric burning overlay
+                overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+                overlay.fill((255, 120, 0, min(100, int(entry_time * 0.02))))
+                self.virtual_screen.blit(overlay, (0, 0))
+                
+                self.screen_shake = 6
+                
+                if entry_time > 3800:
+                    flash = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+                    flash.fill(WHITE)
+                    self.virtual_screen.blit(flash, (0,0))
+
+            else:
+                # PHASE 4: Crash Site & Sequel Teaser
+                self.virtual_screen.fill((8, 12, 10))  # Very dark green sky
+                
+                # Planet Surface / Hills
+                pygame.draw.ellipse(self.virtual_screen, (15, 25, 18), (-200, 700, VIRTUAL_WIDTH + 400, 400))
+                pygame.draw.ellipse(self.virtual_screen, (22, 34, 25), (-100, 750, VIRTUAL_WIDTH + 200, 300))
+                
+                # Glowing Alien Moon
+                moon_x, moon_y = 950, 180
+                moon_color = (180, 255, 200)
+                # Moon atmosphere glow
+                for r in range(4):
+                    g_surf = pygame.Surface((240, 240), pygame.SRCALPHA)
+                    pygame.draw.circle(g_surf, (moon_color[0], moon_color[1], moon_color[2], 40 - r * 10), (120, 120), 80 + r * 15)
+                    self.virtual_screen.blit(g_surf, (moon_x - 120, moon_y - 120))
+                pygame.draw.circle(self.virtual_screen, moon_color, (moon_x, moon_y), 80)
+                
+                # Crashed ship coordinates
+                ship_x, ship_y = VIRTUAL_WIDTH // 2, 775
+                
+                # Heavy Smoke rising from the wreck
+                for i in range(5):
+                    ticks = pygame.time.get_ticks()
+                    sx = ship_x - 10 + math.sin(ticks * 0.002 + i) * 15
+                    sy = ship_y - (ticks * 0.04 + i * 50) % 250
+                    alpha = max(0, 180 - int(ship_y - sy) * 0.8)
+                    s_surf = pygame.Surface((80, 80), pygame.SRCALPHA)
+                    pygame.draw.circle(s_surf, (80, 85, 80, alpha // 2), (40, 40), 15 + i * 6)
+                    pygame.draw.circle(s_surf, (50, 52, 50, alpha // 3), (40, 40), 25 + i * 8)
+                    self.virtual_screen.blit(s_surf, (int(sx - 40), int(sy - 40)))
+                
+                # Bioluminescent spores floating in the atmosphere
+                random.seed(99)  # Keep spore positions consistent
+                for i in range(25):
+                    px = (i * 63 + pygame.time.get_ticks() * 0.01 * (1 + i % 3)) % VIRTUAL_WIDTH
+                    py = (i * 37 - pygame.time.get_ticks() * 0.005 * (1 + i % 2)) % 650
+                    pulse = 100 + int(100 * math.sin(pygame.time.get_ticks() * 0.003 + i))
+                    p_color = (100, 255, 180, max(0, min(255, pulse)))
+                    pygame.draw.circle(self.virtual_screen, p_color, (int(px), int(py)), 3 + (i % 3))
+                random.seed()
+                
+                # Hull sparks erupting occasionally
+                if pygame.time.get_ticks() % 1500 < 250:
+                    for _ in range(4):
+                        spx = ship_x + random.randint(-40, 40)
+                        spy = ship_y + random.randint(-10, 20)
+                        pygame.draw.line(self.virtual_screen, (255, 255, 100), (spx, spy), (spx + random.randint(-15, 15), spy - random.randint(10, 25)), width=2)
+                
+                # Render the damaged custom ship tilted at 45 degrees
+                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 1.0, 0.0, scale=1.1, damaged=True, thruster_intensity=0.0, rotation_angle=45)
+                
+                # UI Reveal
+                if v_time > 15000:
+                    alpha = min(255, (v_time - 15000) // 10)
+                    teaser_surf = self.large_font.render("ZENITH", True, (0, 255, 255))
+                    teaser_surf.set_alpha(alpha)
+                    self.virtual_screen.blit(teaser_surf, (VIRTUAL_WIDTH//2 - teaser_surf.get_width()//2, VIRTUAL_HEIGHT//2 - 80))
+                    
+                    sub_surf = self.font.render("NEW FRONTIER", True, (255, 255, 255))
+                    sub_surf.set_alpha(alpha)
+                    self.virtual_screen.blit(sub_surf, (VIRTUAL_WIDTH//2 - sub_surf.get_width()//2, VIRTUAL_HEIGHT//2))
+                    
+                    coming_surf = self.small_font.render("Coming Soon...", True, GRAY)
+                    coming_surf.set_alpha(alpha)
+                    self.virtual_screen.blit(coming_surf, (VIRTUAL_WIDTH//2 - coming_surf.get_width()//2, VIRTUAL_HEIGHT//2 + 50))
+
+                # Final interaction hints
+                if v_time > 18000:
+                    retry_msg = self.small_font.render("Press R to Restart Exploration", True, (100, 100, 100))
+                    self.virtual_screen.blit(retry_msg, (VIRTUAL_WIDTH // 2 - retry_msg.get_width() // 2, VIRTUAL_HEIGHT - 60))
+                    menu_msg = self.small_font.render("Press M for Main Menu", True, (100, 100, 100))
+                    self.virtual_screen.blit(menu_msg, (VIRTUAL_WIDTH // 2 - menu_msg.get_width() // 2, VIRTUAL_HEIGHT - 35))
             
-            msg = self.large_font.render("VICTORY", True, GREEN)
-            msg_rect = msg.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 - 80))
-            self.virtual_screen.blit(msg, msg_rect)
+        # Draw sliders if in menu/paused
+        if self.state in ('MAIN_MENU', 'CLASS_SELECT', 'PAUSED'):
+            mx, my = pygame.mouse.get_pos()
+            vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
+            vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
             
-            congrats_msg1 = self.font.render("ALL BIOMES SECURED & HARVESTED!", True, WHITE)
-            congrats_rect1 = congrats_msg1.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 - 10))
-            self.virtual_screen.blit(congrats_msg1, congrats_rect1)
+            slider_x = 980
+            slider_w = 150
+            track_h = 6
             
-            congrats_msg2 = self.small_font.render("You conquered the Asteroids, Vulcan, and the glacial depths of Aquaris!", True, CYAN)
-            congrats_rect2 = congrats_msg2.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 + 30))
-            self.virtual_screen.blit(congrats_msg2, congrats_rect2)
+            def draw_slider(label, y_pos, current_val, max_val, is_dragging):
+                vol_ratio = max(0.0, min(1.0, current_val / max_val))
+                
+                # Simple colored rectangle panel with rounded corners
+                pygame.draw.rect(self.virtual_screen, (15, 15, 20, 210), (slider_x - 15, y_pos - 25, slider_w + 30, 50), border_radius=6)
+                pygame.draw.rect(self.virtual_screen, (75, 75, 85), (slider_x - 15, y_pos - 25, slider_w + 30, 50), width=1, border_radius=6)
+                
+                lbl = self.small_font.render(f"{label}: {int(current_val)}", True, CYAN)
+                self.virtual_screen.blit(lbl, (slider_x, y_pos - 20))
+                
+                pygame.draw.rect(self.virtual_screen, (30, 30, 35), (slider_x, y_pos, slider_w, track_h), border_radius=3)
+                pygame.draw.rect(self.virtual_screen, CYAN, (slider_x, y_pos, int(slider_w * vol_ratio), track_h), border_radius=3)
+                
+                kx = slider_x + int(slider_w * vol_ratio)
+                ky = y_pos + track_h // 2
+                
+                is_hover = False
+                slider_rect = pygame.Rect(slider_x - 15, y_pos - 25, slider_w + 30, 50)
+                if slider_rect.collidepoint(vmx, vmy):
+                    is_hover = True
+                    
+                knob_r = 8 if (is_hover or is_dragging) else 6
+                knob_color = WHITE if (is_hover or is_dragging) else CYAN
+                pygame.draw.circle(self.virtual_screen, knob_color, (kx, ky), knob_r)
             
-            retry_msg = self.font.render("Press R to Play Again", True, WHITE)
-            retry_rect = retry_msg.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 + 100))
-            self.virtual_screen.blit(retry_msg, retry_rect)
+            # 1. Volume Slider (y=45)
+            if SOUNDS:
+                draw_slider("SOUND VOL", 45, SOUNDS.volume * 100, 100, self.dragging_volume)
+            else:
+                draw_slider("SOUND VOL", 45, 0, 100, self.dragging_volume)
             
-            menu_msg = self.font.render("Press M for Main Menu", True, YELLOW)
-            menu_rect = menu_msg.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 + 150))
-            self.virtual_screen.blit(menu_msg, menu_rect)
+            # 2. Tint Alpha Slider (y=110)
+            draw_slider("TINT ALPHA", 110, self.filter_tint_alpha, 150, self.dragging_tint)
             
-        # ASPECT-RATIO LETTERBOX SCALING (Prevents stretching & distortion of text/images)
-        aspect_ratio = VIRTUAL_WIDTH / VIRTUAL_HEIGHT
-        window_ratio = SCREEN_WIDTH / SCREEN_HEIGHT
+            # 3. Vignette Alpha Slider (y=175)
+            draw_slider("VIGNETTE", 175, self.filter_vignette_alpha, 200, self.dragging_vignette)
+            
+            # 4. Softness/Blur Slider (y=240)
+            draw_slider("SOFT FOCUS", 240, self.filter_softness, 60, self.dragging_softness)
+            
+        # Restore original virtual screen and apply post-processing filters
+        self.virtual_screen = original_virtual_screen
         
-        if window_ratio > aspect_ratio:
-            self.new_width = int(SCREEN_HEIGHT * aspect_ratio)
-            self.new_height = SCREEN_HEIGHT
-            self.offset_x = (SCREEN_WIDTH - self.new_width) // 2
-            self.offset_y = 0
-        else:
-            self.new_width = SCREEN_WIDTH
-            self.new_height = int(SCREEN_WIDTH / aspect_ratio)
-            self.offset_x = 0
-            self.offset_y = (SCREEN_HEIGHT - self.new_height) // 2
+        # 1. Soft Focus / Edge Softening effect (offset overlay blits)
+        if self.filter_softness > 0:
+            soft_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+            soft_surf.blit(self.virtual_screen, (-1, 0))
+            soft_surf.blit(self.virtual_screen, (1, 0))
+            soft_surf.blit(self.virtual_screen, (0, -1))
+            soft_surf.blit(self.virtual_screen, (0, 1))
+            soft_surf.set_alpha(int(self.filter_softness))
+            self.virtual_screen.blit(soft_surf, (0, 0))
             
-        scaled_screen = pygame.transform.scale(self.virtual_screen, (self.new_width, self.new_height))
+        # 2. Biome-based Color Tint Filter
+        if self.filter_tint_alpha > 0:
+            tint_color = BIOME_CONFIGS.get(self.current_zone, {'theme_color': GRAY})['theme_color']
+            tint_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+            tint_surf.fill((*tint_color, int(self.filter_tint_alpha)))
+            self.virtual_screen.blit(tint_surf, (0, 0))
+            
+        # 3. Vignette Overlay
+        if self.filter_vignette_alpha > 0 and getattr(self, 'vignette_surface', None) is not None:
+            temp_vignette = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+            temp_vignette.blit(self.vignette_surface, (0, 0))
+            factor = min(255, int(self.filter_vignette_alpha * 255 / 200))
+            temp_vignette.fill((255, 255, 255, factor), special_flags=pygame.BLEND_RGBA_MULT)
+            self.virtual_screen.blit(temp_vignette, (0, 0))
+
+        # Composite the dedicated UI layer on top
+        self.virtual_screen.blit(self.ui_surface, (0, 0))
+
+        # Render to logical screen with letterbox padding
+        scaled_screen = pygame.transform.smoothscale(self.virtual_screen, (self.new_width, self.new_height))
+
         self.screen.fill(BLACK)
-        bx = self.offset_x
-        by = self.offset_y
+        
+        bx, by = self.offset_x, self.offset_y
         if self.screen_shake > 0:
-            bx += random.randint(-self.screen_shake, self.screen_shake)
-            by += random.randint(-self.screen_shake, self.screen_shake)
+            shake_amt = min(self.screen_shake, 3)
+            bx += random.randint(-shake_amt, shake_amt)
+            by += random.randint(-shake_amt, shake_amt)
             self.screen_shake = max(0, self.screen_shake - 1)
+            
         self.screen.blit(scaled_screen, (bx, by))
         pygame.display.flip()
 
