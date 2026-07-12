@@ -1056,13 +1056,10 @@ class EngineTrailParticle:
 
     def draw(self, screen, camera_y, camera_x=0):
         draw_x, draw_y = int(self.x - camera_x), int(self.y - camera_y)
-        alpha = int(255 * (self.life / self.max_life))
-        if alpha <= 0: return
-        
-        surf = pygame.Surface((self.radius * 4, self.radius * 4), pygame.SRCALPHA)
-        pygame.draw.circle(surf, (*self.color, alpha // 4), (int(self.radius * 2), int(self.radius * 2)), int(self.radius * 2))
-        pygame.draw.circle(surf, (255, 255, 255, alpha // 2), (int(self.radius * 2), int(self.radius * 2)), int(self.radius * 0.8))
-        screen.blit(surf, (draw_x - int(self.radius * 2), draw_y - int(self.radius * 2)))
+        # Fast direct circle draws instead of creating brand new Surfaces per particle per frame
+        r = int(self.radius)
+        if r > 0:
+            pygame.draw.circle(screen, self.color, (draw_x, draw_y), r)
 
 class SmallPortal:
     def __init__(self, x, y):
