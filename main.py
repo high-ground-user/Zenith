@@ -1,3 +1,8 @@
+"""
+This is the main module for the space game.
+It handles the overall structure and flow of the game.
+"""
+
 import pygame
 import random
 import sys
@@ -5,6 +10,11 @@ import math
 import io
 import wave
 import struct
+
+
+
+import os
+
 
 # Constants
 SCREEN_WIDTH = 800
@@ -32,6 +42,9 @@ PURPLE = (147, 112, 219)
 
 SOUNDS = None
 
+
+#### player.py
+
 class SoundManager:
     def __init__(self):
         try:
@@ -44,23 +57,72 @@ class SoundManager:
             return
 
         self.sounds = {}
-        # Generate basic retro sounds in memory (enhanced with triangle waves, red noise, and custom decay)
-        self.sounds['laser'] = self._gen_synth('triangle', 660, 0.12, vol=0.12, sweep=-0.6, decay=4.0)
-        self.sounds['shotgun'] = self._gen_synth('noise', 80, 0.25, vol=0.25, sweep=-0.2, decay=5.0)
-        self.sounds['railgun'] = self._gen_synth('sine', 180, 0.35, vol=0.22, sweep=-0.4, decay=3.0)
-        self.sounds['explosion'] = self._gen_synth('noise', 40, 0.5, vol=0.35, sweep=-0.4, decay=2.5)
-        self.sounds['siren'] = self._gen_synth('sine', 500, 0.4, vol=0.15, sweep=0.1, decay=2.0)
-        self.sounds['hit'] = self._gen_synth('noise', 120, 0.08, vol=0.2, sweep=-0.2, decay=6.0)
-        self.sounds['collect'] = self._gen_synth('sine', 950, 0.15, vol=0.15, sweep=0.4, decay=4.5)
-        self.sounds['launch'] = self._gen_synth('noise', 100, 0.3, vol=0.2, sweep=-0.4, decay=4.0)
-        self.sounds['warp'] = self._gen_synth('sine', 150, 1.2, vol=0.3, sweep=1.0, decay=1.5)
+        # Create external sounds folder if not exists
+        if not os.path.exists(os.path.join("assets", "sounds")):
+            try:
+                os.makedirs(os.path.join("assets", "sounds"), exist_ok=True)
+            except Exception:
+                pass
+
+        # Generate basic retro sounds in memory (or load custom ones if available)
+        self.sounds['laser'] = self._load_or_synth('laser', 'triangle', 660, 0.12, vol=0.12, sweep=-0.6, decay=4.0)
+        self.sounds['shotgun'] = self._load_or_synth('shotgun', 'noise', 80, 0.25, vol=0.25, sweep=-0.2, decay=5.0)
+        self.sounds['railgun'] = self._load_or_synth('railgun', 'sine', 180, 0.35, vol=0.22, sweep=-0.4, decay=3.0)
+        self.sounds['explosion'] = self._load_or_synth('explosion', 'noise', 40, 0.5, vol=0.35, sweep=-0.4, decay=2.5)
+        self.sounds['siren'] = self._load_or_synth('siren', 'sine', 500, 0.4, vol=0.15, sweep=0.1, decay=2.0)
+        self.sounds['hit'] = self._load_or_synth('hit', 'noise', 120, 0.08, vol=0.2, sweep=-0.2, decay=6.0)
+        self.sounds['collect'] = self._load_or_synth('collect', 'sine', 950, 0.15, vol=0.15, sweep=0.4, decay=4.5)
+        self.sounds['launch'] = self._load_or_synth('launch', 'noise', 100, 0.3, vol=0.2, sweep=-0.4, decay=4.0)
+        self.sounds['warp'] = self._load_or_synth('warp', 'sine', 150, 1.2, vol=0.3, sweep=1.0, decay=1.5)
+        self.sounds['shield_down'] = self._load_or_synth('shield_down', 'sine', 200, 0.4, vol=0.30, sweep=-0.8, decay=2.0)
+        self.sounds['shield_recharge'] = self._load_or_synth('shield_recharge', 'sine', 350, 0.8, vol=0.15, sweep=0.2, decay=1.0)
+        self.sounds['crash'] = self._load_or_synth('crash', 'noise', 70, 0.35, vol=0.35, sweep=-0.4, decay=2.5)
+        self.sounds['metal_hit'] = self._load_or_synth('metal_hit', 'triangle', 1200, 0.06, vol=0.15, sweep=-0.9, decay=8.0)
+        self.sounds['engine'] = self._load_or_synth('engine', 'sine', 80, 0.25, vol=0.15, sweep=0.0, decay=1.0)
+        self.sounds['tick'] = self._load_or_synth('tick', 'sine', 1500, 0.03, vol=0.08, sweep=-0.8, decay=10.0)
         
-        self.music_ambient = self._gen_ambient_music()
-        self.music_boss = self._gen_boss_music()
+        self.sounds['victory'] = self._load_victory_or_synth()
+        
+        self.music_ambient = self._load_music_or_synth('ambient', 'ambient')
+        self.music_boss = self._load_music_or_synth('boss', 'boss')
+        
         self.chan_ambient = None
         self.chan_boss = None
 
         self.set_global_volume(self.volume)
+
+    def _load_or_synth(self, name, wave_type, freq, duration, vol=0.5, sweep=0.0, decay=3.0):
+        path = os.path.join("assets", "sounds", f"{name}.wav")
+        if os.path.exists(path):
+            try:
+                sound = pygame.mixer.Sound(path)
+                sound.set_volume(vol)
+                return sound
+            except Exception:
+                pass
+        return self._gen_synth(wave_type, freq, duration, vol, sweep, decay)
+
+    def _load_victory_or_synth(self):
+        path = os.path.join("assets", "sounds", "victory.wav")
+        if os.path.exists(path):
+            try:
+                return pygame.mixer.Sound(path)
+            except Exception:
+                pass
+        return self._gen_victory_fanfare()
+
+    def _load_music_or_synth(self, filename, music_type):
+        for ext in ('.ogg', '.wav', '.mp3'):
+            path = os.path.join("assets", "sounds", f"{filename}{ext}")
+            if os.path.exists(path):
+                try:
+                    return pygame.mixer.Sound(path)
+                except Exception:
+                    pass
+        if music_type == 'ambient':
+            return self._gen_ambient_music()
+        else:
+            return self._gen_boss_music()
 
     def set_global_volume(self, volume):
         if not self.enabled: return
@@ -87,23 +149,32 @@ class SoundManager:
                     current_freq = freq * (1.0 + sweep * (i / num_samples))
                     
                     if wave_type == 'square':
-                        val = 1.0 if math.sin(2 * math.pi * current_freq * t) > 0 else -1.0
+                        v1 = 1.0 if math.sin(2 * math.pi * current_freq * t) > 0 else -1.0
+                        v2 = 1.0 if math.sin(2 * math.pi * current_freq * 1.015 * t) > 0 else -1.0
+                        val = (v1 + v2) * 0.5
                     elif wave_type == 'triangle':
-                        cycle = current_freq * t
-                        val = 2.0 * abs(2.0 * (cycle - math.floor(cycle + 0.5))) - 1.0
+                        cycle1 = current_freq * t
+                        cycle2 = current_freq * 1.015 * t
+                        v1 = 2.0 * abs(2.0 * (cycle1 - math.floor(cycle1 + 0.5))) - 1.0
+                        v2 = 2.0 * abs(2.0 * (cycle2 - math.floor(cycle2 + 0.5))) - 1.0
+                        val = (v1 + v2) * 0.5
                     elif wave_type == 'sawtooth':
-                        cycle = current_freq * t
-                        val = 2.0 * (cycle - math.floor(cycle + 0.5))
+                        cycle1 = current_freq * t
+                        cycle2 = current_freq * 1.015 * t
+                        v1 = 2.0 * (cycle1 - math.floor(cycle1 + 0.5))
+                        v2 = 2.0 * (cycle2 - math.floor(cycle2 + 0.5))
+                        val = (v1 + v2) * 0.5
                     elif wave_type == 'noise':
-                        # One-pole LPF to turn harsh white noise into soft red noise
                         raw_noise = random.uniform(-1.0, 1.0)
                         noise_state = 0.85 * noise_state + 0.15 * raw_noise
-                        val = noise_state * 3.5  # Gain recovery
+                        val = noise_state * 3.5
                     else: # sine
-                        val = math.sin(2 * math.pi * current_freq * t)
+                        v1 = math.sin(2 * math.pi * current_freq * t)
+                        v2 = math.sin(2 * math.pi * current_freq * 1.015 * t)
+                        val = (v1 + v2) * 0.5
                         
-                    # Smooth exponential decay + fade-out to prevent pops
-                    envelope = math.exp(-decay * (i / num_samples)) * (1.0 - i / num_samples)
+                    fade_in = min(1.0, float(i) / 100.0)
+                    envelope = fade_in * math.exp(-decay * (i / num_samples)) * (1.0 - i / num_samples)
                     sample = int(val * vol * envelope * 32767)
                     sample = max(-32768, min(32767, sample))
                     data += struct.pack('<h', sample)
@@ -125,7 +196,6 @@ class SoundManager:
         dy = source_y - player_y
         dist = math.sqrt(dx**2 + dy**2)
         
-        # Max audible distance of 1500px
         vol_mult = max(0.0, min(1.0, 1.0 - (dist / 1500.0)))
         pan = max(-1.0, min(1.0, dx / 600.0))
         
@@ -138,7 +208,7 @@ class SoundManager:
 
     def _gen_ambient_music(self):
         sample_rate = 22050
-        duration = 8.0
+        duration = 32.0
         num_samples = int(sample_rate * duration)
         buf = io.BytesIO()
         try:
@@ -148,26 +218,61 @@ class SoundManager:
                 wav.setframerate(sample_rate)
                 data = bytearray()
                 
-                # Ambient chords: slow 4-note progression (Cmin7 -> Abmaj7 -> Gmin7 -> Fmin7)
+                # Dynamic 8-chord progression (Space Opera ambient theme)
                 chords = [
-                    [130.81, 155.56, 196.00, 233.08],
-                    [103.83, 155.56, 207.65, 261.63],
-                    [98.00, 146.83, 196.00, 233.08],
-                    [87.31, 130.81, 174.61, 207.65]
+                    [164.81, 196.00, 246.94, 329.63], # Em (E3, G3, B3, E4)
+                    [130.81, 164.81, 196.00, 246.94], # Cmaj7 (C3, E3, G3, B3)
+                    [110.00, 146.83, 174.61, 220.00], # Am9 (A2, D3, F3, A3)
+                    [146.83, 185.00, 220.00, 246.94], # D6 (D3, F#3, A3, B3)
+                    [164.81, 196.00, 246.94, 329.63], # Em
+                    [196.00, 246.94, 293.66, 392.00], # G
+                    [130.81, 164.81, 196.00, 261.63], # C
+                    [123.47, 164.81, 185.00, 246.94]  # B7
+                ]
+                roots = [82.41, 65.41, 55.00, 73.42, 82.41, 98.00, 65.41, 61.74]
+                
+                # Echoing cinematic piano motif (longer structural layout)
+                piano_notes = [
+                    (0.0, 659.25), (0.75, 783.99), (1.5, 739.99), (2.25, 587.33),
+                    (4.0, 659.25), (4.75, 523.25), (5.5, 587.33), (6.25, 493.88),
+                    (8.0, 440.00), (8.75, 523.25), (9.5, 587.33), (10.25, 659.25),
+                    (12.0, 587.33), (12.75, 739.99), (13.5, 659.25), (14.25, 493.88),
+                    (16.0, 659.25), (16.75, 783.99), (17.5, 880.00), (18.25, 987.77),
+                    (20.0, 1046.50), (20.75, 987.77), (21.5, 880.00), (22.25, 783.99),
+                    (24.0, 783.99), (24.75, 659.25), (25.5, 739.99), (26.25, 587.33),
+                    (28.0, 587.33), (28.75, 493.88), (29.5, 523.25), (30.25, 440.00)
                 ]
                 
                 for i in range(num_samples):
                     t = float(i) / sample_rate
-                    chord_idx = int((t / duration) * len(chords)) % len(chords)
+                    chord_idx = int((t / 4.0)) % len(chords)
                     notes = chords[chord_idx]
                     
-                    val = 0.0
+                    # 1. Detuned Choral Choir Pad
+                    pad_val = 0.0
                     for freq in notes:
-                        lfo = 0.4 + 0.3 * math.sin(2 * math.pi * 0.25 * t)
-                        val += math.sin(2 * math.pi * freq * t) * lfo
-                    val /= len(notes)
+                        osc1 = math.sin(2 * math.pi * freq * t)
+                        osc2 = math.sin(2 * math.pi * freq * 1.005 * t)
+                        osc3 = math.sin(2 * math.pi * freq * 0.995 * t)
+                        lfo = 0.4 + 0.15 * math.sin(2 * math.pi * 0.25 * t)
+                        pad_val += (osc1 + osc2 + osc3) * 0.33 * lfo
+                    pad_val /= len(notes)
                     
-                    sample = int(val * 0.08 * 32767)
+                    # 2. Rich Low Bass Drone (sub-frequency warm sine)
+                    bass_val = math.sin(2 * math.pi * roots[chord_idx] * t) * 0.45
+                    
+                    # 3. Echoing Piano Motif (with secondary decay sweep)
+                    piano_val = 0.0
+                    for start_t, freq in piano_notes:
+                        if t >= start_t and t < start_t + 1.5:
+                            note_t = t - start_t
+                            env = math.exp(-3.5 * note_t) * (1.0 - note_t / 1.5)
+                            piano_val += (math.sin(2 * math.pi * freq * note_t) * 0.70 + 
+                                          math.sin(2 * math.pi * freq * 2.0 * note_t) * 0.20 +
+                                          math.sin(2 * math.pi * freq * 3.0 * note_t) * 0.10) * env
+                    
+                    total_val = (pad_val * 0.40 + bass_val * 0.35 + piano_val * 0.25)
+                    sample = int(total_val * 0.16 * 32767)
                     sample = max(-32768, min(32767, sample))
                     data += struct.pack('<h', sample)
                 wav.writeframes(data)
@@ -178,7 +283,7 @@ class SoundManager:
 
     def _gen_boss_music(self):
         sample_rate = 22050
-        duration = 4.0
+        duration = 18.0
         num_samples = int(sample_rate * duration)
         buf = io.BytesIO()
         try:
@@ -188,19 +293,113 @@ class SoundManager:
                 wav.setframerate(sample_rate)
                 data = bytearray()
                 
-                # Fast bassline notes: C2 -> Eb2 -> D2 -> Bb1
-                bassline = [65.41, 77.78, 73.42, 58.27]
+                # E-minor driving bass gallop sequence
+                bass_notes = [82.41, 82.41, 98.00, 82.41, 82.41, 110.00, 82.41, 82.41]
+                
+                # Epic brass horns melody sweep (full verse layout)
+                brass_notes = [
+                    (0.0, 329.63), (0.45, 329.63), (0.9, 392.00), (1.35, 392.00),
+                    (1.8, 440.00), (2.25, 440.00), (2.7, 493.88), (3.6, 392.00),
+                    (4.05, 440.00), (4.5, 329.63),
+                    
+                    (5.4, 440.00), (5.85, 440.00), (6.3, 493.88), (6.75, 493.88),
+                    (7.2, 523.25), (7.65, 587.33), (8.1, 493.88), (9.0, 523.25),
+                    
+                    (9.9, 659.25), (10.35, 659.25), (10.8, 783.99), (11.25, 783.99),
+                    (11.7, 880.00), (12.15, 880.00), (12.6, 987.77), (13.5, 783.99),
+                    (13.95, 880.00), (14.4, 659.25),
+                    
+                    (15.3, 880.00), (15.75, 880.00), (16.2, 783.99), (16.65, 739.99),
+                    (17.1, 659.25)
+                ]
                 
                 for i in range(num_samples):
                     t = float(i) / sample_rate
-                    beat_idx = int(t / 0.214) % len(bassline)
-                    freq = bassline[beat_idx]
                     
-                    cycle = freq * t
-                    val = 2.0 * (cycle - math.floor(cycle + 0.5))
-                    env = 1.0 - (t % 0.214) / 0.214
+                    # 1. Driving Bass Gallop (dynamic E-minor groove)
+                    bass_step = int(t / 0.18) % len(bass_notes)
+                    base_freq = bass_notes[bass_step]
+                    bass_t = t % 0.18
+                    bass_env = (1.0 - bass_t / 0.18) ** 1.6
+                    cycle = base_freq * t
+                    bass_val = 2.0 * abs(2.0 * (cycle - math.floor(cycle + 0.5))) - 1.0
+                    bass_val = bass_val * bass_env * 0.6
                     
-                    sample = int(val * 0.15 * env * 32767)
+                    # 2. Epic detuned Sawtooth Brass Horn Sweep
+                    brass_val = 0.0
+                    for start_t, freq in brass_notes:
+                        if t >= start_t and t < start_t + 1.2:
+                            note_t = t - start_t
+                            env = (1.0 - math.exp(-8.0 * note_t)) * math.exp(-2.0 * note_t) * (1.0 - note_t / 1.2)
+                            c1 = freq * note_t
+                            c2 = freq * 1.008 * note_t
+                            v1 = 2.0 * (c1 - math.floor(c1 + 0.5))
+                            v2 = 2.0 * (c2 - math.floor(c2 + 0.5))
+                            brass_val += (v1 + v2) * 0.5 * env
+                    
+                    # 3. Dynamic Percussion: Orchestral Kicks & Military Snare Rolls
+                    drum_val = 0.0
+                    kick_t = t % 0.72
+                    if kick_t < 0.18:
+                        kick_freq = 130 - (kick_t / 0.18) * 90
+                        kick_env = (1.0 - kick_t / 0.18) ** 2.0
+                        drum_val += math.sin(2 * math.pi * kick_freq * kick_t) * kick_env * 0.95
+                    
+                    beat_step = int(t / 0.09) % 16
+                    if beat_step in (2, 3, 6, 7, 10, 11, 13, 14, 15):
+                        snare_t = t % 0.09
+                        snare_env = 1.0 - snare_t / 0.09
+                        noise_sample = random.uniform(-1.0, 1.0)
+                        drum_val += (noise_sample * 0.75 + math.sin(2 * math.pi * 170 * snare_t) * 0.25) * snare_env * 0.35
+                    
+                    # Synthesize high-frequency crash cymbal on chord boundary shifts (every 4.5s)
+                    crash_t = t % 4.5
+                    if crash_t < 0.8:
+                        crash_env = math.exp(-4.0 * crash_t) * (1.0 - crash_t / 0.8)
+                        drum_val += random.uniform(-1.0, 1.0) * crash_env * 0.30
+                    
+                    # High Choir pad drone to build final-phase tension
+                    choir_val = 0.0
+                    if t > 9.0:
+                        lfo = 0.5 + 0.2 * math.sin(2 * math.pi * 0.5 * t)
+                        choir_val = math.sin(2 * math.pi * 659.25 * t) * lfo * 0.2
+                    
+                    total_val = (bass_val * 0.28 + brass_val * 0.36 + drum_val * 0.28 + choir_val * 0.08)
+                    sample = int(total_val * 0.18 * 32767)
+                    sample = max(-32768, min(32767, sample))
+                    data += struct.pack('<h', sample)
+                wav.writeframes(data)
+            buf.seek(0)
+            return pygame.mixer.Sound(buf)
+        except Exception:
+            return None
+
+    def _gen_victory_fanfare(self):
+        if not self.enabled: return None
+        sample_rate = 22050
+        duration = 3.0
+        num_samples = int(sample_rate * duration)
+        buf = io.BytesIO()
+        try:
+            with wave.open(buf, 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(sample_rate)
+                data = bytearray()
+                
+                notes = [261.63, 329.63, 392.00, 523.25]
+                for i in range(num_samples):
+                    t = float(i) / sample_rate
+                    note_idx = min(3, int(t / 0.4))
+                    freq = notes[note_idx]
+                    
+                    vib = 1.0 + 0.02 * math.sin(2 * math.pi * 6 * t)
+                    osc1 = math.sin(2 * math.pi * freq * vib * t)
+                    osc2 = math.sin(2 * math.pi * freq * vib * 1.01 * t)
+                    val = (osc1 + osc2) * 0.5
+                    
+                    env = 1.0 - t / duration
+                    sample = int(val * 0.25 * env * 32767)
                     sample = max(-32768, min(32767, sample))
                     data += struct.pack('<h', sample)
                 wav.writeframes(data)
@@ -267,40 +466,77 @@ class LootPickup:
         ticks = pygame.time.get_ticks()
         pulse = int(2 * math.sin(ticks * 0.02))
         
-        # Rotating diamond wireframe
-        num_sides = 4
-        r = self.radius + pulse
-        points = []
-        for i in range(num_sides):
-            ang = math.radians(i * 90 + ticks * 0.06)
-            px = draw_x + int(r * math.cos(ang))
-            py = draw_y + int(r * math.sin(ang))
-            points.append((px, py))
+        if self.rarity == 'COMMON':
+            # Rotating Octagon wireframe with crosshairs (Common / Shield)
+            num_sides = 8
+            r = self.radius + pulse
+            points = []
+            for i in range(num_sides):
+                ang = math.radians(i * 45 + ticks * 0.06)
+                px = draw_x + int(r * math.cos(ang))
+                py = draw_y + int(r * math.sin(ang))
+                points.append((px, py))
+            pygame.draw.polygon(screen, self.color, points, width=1)
+            pygame.draw.line(screen, WHITE, (draw_x - r, draw_y), (draw_x + r, draw_y), 1)
+            pygame.draw.line(screen, WHITE, (draw_x, draw_y - r), (draw_x, draw_y + r), 1)
             
-        pygame.draw.polygon(screen, self.color, points, width=1)
-        
-        # Inner smaller rotating diamond in opposite direction
-        points_in = []
-        r_in = max(2, self.radius - 4 - pulse)
-        for i in range(num_sides):
-            ang = math.radians(i * 90 - ticks * 0.09)
-            px = draw_x + int(r_in * math.cos(ang))
-            py = draw_y + int(r_in * math.sin(ang))
-            points_in.append((px, py))
+        elif self.rarity == 'UNCOMMON':
+            # Rotating Triangle wireframe (Uncommon / Cooldown)
+            num_sides = 3
+            r = self.radius + pulse + 2
+            points = []
+            for i in range(num_sides):
+                ang = math.radians(i * 120 + ticks * 0.06)
+                px = draw_x + int(r * math.cos(ang))
+                py = draw_y + int(r * math.sin(ang))
+                points.append((px, py))
+            pygame.draw.polygon(screen, self.color, points, width=1)
             
-        pygame.draw.polygon(screen, WHITE, points_in, width=1)
+            # Inner smaller counter-rotating triangle
+            points_in = []
+            r_in = max(2, self.radius - 3 - pulse)
+            for i in range(num_sides):
+                ang = math.radians(i * 120 - ticks * 0.09)
+                px = draw_x + int(r_in * math.cos(ang))
+                py = draw_y + int(r_in * math.sin(ang))
+                points_in.append((px, py))
+            pygame.draw.polygon(screen, WHITE, points_in, width=1)
+            
+        else:
+            # Rotating 4-pointed Star wireframe (Rare / Damage)
+            r_outer = self.radius + pulse + 3
+            r_inner = (self.radius + pulse) // 2
+            points = []
+            for i in range(8):
+                ang = math.radians(i * 45 + ticks * 0.08)
+                r = r_outer if i % 2 == 0 else r_inner
+                px = draw_x + int(r * math.cos(ang))
+                py = draw_y + int(r * math.sin(ang))
+                points.append((px, py))
+            pygame.draw.polygon(screen, self.color, points, width=1)
+            
+            # Inner rotating diamond
+            points_in = []
+            r_in = max(2, self.radius - 4 - pulse)
+            for i in range(4):
+                ang = math.radians(i * 90 - ticks * 0.12)
+                px = draw_x + int(r_in * math.cos(ang))
+                py = draw_y + int(r_in * math.sin(ang))
+                points_in.append((px, py))
+            pygame.draw.polygon(screen, WHITE, points_in, width=1)
 
 BIOME_CONFIGS = {
-    'ASTEROIDS': {'name': 'Asteroid Belt', 'theme_color': GRAY, 'desc': 'Heavy Meteor Shower', 'stars_color': GRAY, 'hub': 1, 'order': 0, 'boss_count': 1},
-    'VULCAN': {'name': 'Vulcan Sector', 'theme_color': ORANGE, 'desc': 'Hyper Fast Speed', 'stars_color': ORANGE, 'hub': 1, 'order': 1, 'boss_count': 1},
-    'AQUARIS': {'name': 'Aquaris Nebula', 'theme_color': CYAN, 'desc': 'Armored Ice Fields', 'stars_color': CYAN, 'hub': 1, 'order': 2, 'boss_count': 1},
+    'TUTORIAL': {'name': 'Training Range', 'theme_color': GREEN, 'desc': 'No-Damage Practice', 'stars_color': GREEN, 'hub': 1, 'order': 3, 'boss_count': 0},
+    'ASTEROIDS': {'name': 'Asteroid Belt', 'theme_color': GRAY, 'desc': 'Heavy Meteor Shower', 'stars_color': GRAY, 'hub': 1, 'order': 0, 'boss_count': 0},
+    'VULCAN': {'name': 'Vulcan Sector', 'theme_color': ORANGE, 'desc': 'Hyper Fast Speed', 'stars_color': ORANGE, 'hub': 1, 'order': 1, 'boss_count': 0},
+    'AQUARIS': {'name': 'Aquaris Nebula', 'theme_color': CYAN, 'desc': 'Armored Ice Fields', 'stars_color': CYAN, 'hub': 1, 'order': 2, 'boss_count': 0},
     
     'NEBULA': {'name': 'Nebula Storm', 'theme_color': PURPLE, 'desc': 'Electrical Storms', 'stars_color': PURPLE, 'hub': 2, 'order': 0, 'boss_count': 2},
-    'PLASMA': {'name': 'Plasma Core', 'theme_color': GOLD, 'desc': 'High-Energy Currents', 'stars_color': GOLD, 'hub': 2, 'order': 1, 'boss_count': 2},
+    'PLASMA': {'name': 'Plasma Core', 'theme_color': GOLD, 'desc': 'High-Energy Currents', 'stars_color': GOLD, 'hub': 2, 'order': 1, 'boss_count': 0},
     'SINGULARITY': {'name': 'Singularity Factory', 'theme_color': BLUE, 'desc': 'Reactor Meltdown', 'stars_color': BLUE, 'hub': 2, 'order': 2, 'boss_count': 1},
     
-    'QUANTUM': {'name': 'Quantum Rift', 'theme_color': GREEN, 'desc': 'Dimensional Shifting', 'stars_color': GREEN, 'hub': 3, 'order': 0, 'boss_count': 2},
-    'VOID': {'name': 'Void Chasm', 'theme_color': INDIGO, 'desc': 'Zero-Gravity Abyss', 'stars_color': INDIGO, 'hub': 3, 'order': 1, 'boss_count': 2},
+    'QUANTUM': {'name': 'Quantum Rift', 'theme_color': GREEN, 'desc': 'Stabilizer Demolition', 'stars_color': GREEN, 'hub': 3, 'order': 0, 'boss_count': 0},
+    'VOID': {'name': 'Void Chasm', 'theme_color': INDIGO, 'desc': 'Zero-Gravity Abyss', 'stars_color': INDIGO, 'hub': 3, 'order': 1, 'boss_count': 0},
     'ORION': {'name': 'Orion Citadel', 'theme_color': MAGENTA, 'desc': 'Overlord Fortress', 'stars_color': MAGENTA, 'hub': 3, 'order': 2, 'boss_count': 3}
 }
 
@@ -375,7 +611,7 @@ NPC_INFO = {
 
 
 class Bullet:
-    def __init__(self, x, y, dx, dy, speed=18, life=100, piercing=False, damage=1.0, color=(255, 255, 0)):
+    def __init__(self, x, y, dx, dy, speed=19.8, life=100, piercing=False, damage=1.0, color=(255, 255, 0)):
         self.x = x
         self.y = y
         self.dx = dx
@@ -437,7 +673,7 @@ class Torpedo:
         self.y = y
         self.dx = dx
         self.dy = dy
-        self.speed = 15
+        self.speed = 16.5
         self.radius = int(8 * scale)
         self.rect = pygame.Rect(self.x - self.radius, self.y - self.radius, self.radius * 2, self.radius * 2)
         self.exploded = False
@@ -532,7 +768,7 @@ class HomingMissile:
         self.y = y
         self.dx = dx
         self.dy = dy
-        self.speed = 10.0
+        self.speed = 11.0
         self.width = 16
         self.height = 16
         self.rect = pygame.Rect(self.x - 8, self.y - 8, self.width, self.height)
@@ -878,7 +1114,7 @@ class ShockwaveRing:
             pygame.draw.circle(screen, self.color, (draw_x, draw_y), r, width=1)
 
 class EnemyBullet:
-    def __init__(self, x, y, dx, dy, color=(255, 100, 100), speed=6, size=8, is_gravity=False, is_homing=False, target_player=None, telegraph_frames=6, life_time=0, shooter=None):
+    def __init__(self, x, y, dx, dy, color=(255, 100, 100), speed=6.6, size=8, is_gravity=False, is_homing=False, target_player=None, telegraph_frames=6, life_time=0, shooter=None):
         self.x = x
         self.y = y
         self.dx = dx
@@ -1622,6 +1858,7 @@ class Enemy:
         self.is_dormant = True  # Used by Meteor Dart
         self.last_evade = 0
         self.evade_cooldown = 1500
+        self.seen = False
         if self.subtype in ('SCOUT', 'ELITE'):
             self.evade_chance = random.uniform(0.40, 0.65)
         else:
@@ -1747,6 +1984,14 @@ class Enemy:
                 self.name = "Orion Assassin"; self.speed = 6.5; self.color = (255, 150, 255); self.health = 3; self.shoot_delay = 1000; self.width, self.height = 28, 28; self.credits_value = 80
             else:
                 self.name = "Imperial Overlord"; self.speed = 4.0; self.color = WHITE; self.health = 40; self.shoot_delay = 1200; self.credits_value = 500
+        elif zone == 'TUTORIAL':
+            # Target dummy configuration (tutorial range)
+            self.name = "Target Dummy"
+            self.speed = random.uniform(0.6, 1.2)
+            self.color = GREEN
+            self.health = 1
+            self.shoot_delay = 999999999
+            self.credits_value = 10
         else: # ASTEROIDS or default
             if self.subtype == 'STANDARD':
                 self.name = "Scrap Raider"; self.speed = random.uniform(2.2, 3.0); self.color = RED; self.health = 1; self.shoot_delay = 2200; self.credits_value = 15
@@ -1759,7 +2004,9 @@ class Enemy:
         # Scale difficulty based on zone index
         zone_keys = ['ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'VOID', 'QUANTUM', 'SINGULARITY', 'ORION']
         diff_idx = zone_keys.index(zone) if zone in zone_keys else 0
-        if diff_idx > 0:
+        if zone == 'TUTORIAL':
+            pass
+        elif diff_idx > 0:
             self.health = max(1, self.health + diff_idx // 4)
             if self.shoot_delay < 5000000:
                 self.shoot_delay = max(700, self.shoot_delay - diff_idx * 55)
@@ -1779,7 +2026,7 @@ class Enemy:
         self.acceleration = 0.1
         self.drag = 0.98
  
-    def update(self, current_time, player, projectiles_list, player_bullets=None, torpedoes=None, obstacles=None):
+    def update(self, current_time, player, projectiles_list, player_bullets=None, torpedoes=None, obstacles=None, convoy=None):
         if getattr(player, 'is_cloaked', False):
             # Drift aimlessly if player is cloaked
             self.velocity *= self.drag
@@ -1789,8 +2036,15 @@ class Enemy:
             return # Don't target or shoot
 
         player_center = pygame.math.Vector2(player.rect.center)
+        target_center = player_center
+        if convoy and convoy.health > 0:
+            c_center = pygame.math.Vector2(convoy.rect.center)
+            e_center = pygame.math.Vector2(self.rect.center)
+            if e_center.distance_to(c_center) < e_center.distance_to(target_center):
+                target_center = c_center
+
         enemy_center = pygame.math.Vector2(self.rect.center)
-        to_player = player_center - enemy_center
+        to_player = target_center - enemy_center
 
         # 1. Ambush / Gimmick Logic
         if self.subtype == 'SCOUT':
@@ -1870,23 +2124,35 @@ class Enemy:
                 avoid_force += dist_vec.normalize() * (180 - dist) * 0.04
         self.velocity += avoid_force
 
+        # Pursuit Mode: If player has seen the enemy and is traveling away from it, the enemy gains a pursuit speed boost
+        current_speed = self.speed
+        current_accel = self.acceleration
+        if getattr(self, 'seen', False):
+            player_vel = pygame.math.Vector2(player.velocity)
+            if player_vel.length() > 0.5:
+                to_player_dir = to_player.copy()
+                if to_player_dir.length() > 0:
+                    if player_vel.dot(to_player_dir) > 0:
+                        current_speed = max(self.speed, player.max_speed + 0.6)
+                        current_accel = self.acceleration * 2.2
+
         if to_player.length() > 5:
             self.angle = math.degrees(math.atan2(to_player.y, to_player.x))
             accel_dir = to_player.normalize()
-            self.velocity += accel_dir * self.acceleration
+            self.velocity += accel_dir * current_accel
         else:
             self.angle = 90.0
             
         self.velocity *= self.drag
-        if self.velocity.length() > self.speed:
-            self.velocity = self.velocity.normalize() * self.speed
+        if self.velocity.length() > current_speed:
+            self.velocity = self.velocity.normalize() * current_speed
             
         self.x += self.velocity.x
         self.y += self.velocity.y
         self.rect.x = int(self.x)
         self.rect.y = int(self.y)
             
-        if abs(self.y - player_center.y) < 600:
+        if abs(self.y - target_center.y) < 600:
             if current_time - self.last_shot > self.shoot_delay:
                 self.last_shot = current_time
                 rad = math.radians(self.angle)
@@ -1994,6 +2260,8 @@ class Enemy:
             return
 
         draw_y = self.y - camera_y
+        if 0 <= draw_x <= VIRTUAL_WIDTH and 0 <= draw_y <= VIRTUAL_HEIGHT:
+            self.seen = True
         center_x = draw_x + self.width // 2
         center_y = draw_y + self.height // 2
         center = pygame.math.Vector2(center_x, center_y)
@@ -2319,6 +2587,192 @@ class Anomaly:
         pygame.draw.circle(screen, (200, 50, 255), (int(draw_x), int(draw_y)), max(1, self.radius - 10 + pulse))
         pygame.draw.circle(screen, WHITE, (int(draw_x), int(draw_y)), max(1, self.radius - 18))
 
+class ConvoyShip:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.width = 68
+        self.height = 100
+        self.health = 100.0
+        self.max_health = 100.0
+        self.speed = 2.0
+        self.rect = pygame.Rect(self.x - self.width//2, self.y - self.height//2, self.width, self.height)
+
+    def update(self):
+        self.y -= self.speed
+        self.rect.center = (int(self.x), int(self.y))
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        ticks = pygame.time.get_ticks()
+        
+        # 1. Side engine nacelles/wings
+        pygame.draw.rect(screen, (70, 80, 100), (int(draw_x - 34), int(draw_y - 15), 10, 45), border_radius=3)
+        pygame.draw.rect(screen, (70, 80, 100), (int(draw_x + 24), int(draw_y - 15), 10, 45), border_radius=3)
+        
+        # 2. Main industrial hull core
+        pygame.draw.rect(screen, (90, 95, 110), (int(draw_x - 18), int(draw_y - 35), 36, 65), border_radius=5)
+        # Cargo containers on ship body
+        pygame.draw.rect(screen, GOLD, (int(draw_x - 12), int(draw_y - 15), 24, 30))
+        # Hull lining accents
+        pygame.draw.line(screen, CYAN, (draw_x - 18, draw_y - 25), (draw_x + 18, draw_y - 25), 2)
+        pygame.draw.line(screen, CYAN, (draw_x - 18, draw_y + 15), (draw_x + 18, draw_y + 15), 2)
+        
+        # 3. Cockpit / Head of the ship (sleek triangle bow)
+        pygame.draw.polygon(screen, (110, 115, 130), [
+            (draw_x, draw_y - 50),
+            (draw_x - 18, draw_y - 35),
+            (draw_x + 18, draw_y - 35)
+        ])
+        # Cyan visor
+        pygame.draw.polygon(screen, CYAN, [
+            (draw_x, draw_y - 46),
+            (draw_x - 8, draw_y - 38),
+            (draw_x + 8, draw_y - 38)
+        ])
+        
+        # 4. Engine thrumming plumes (flickering nacelle flame trails)
+        flame_len1 = 12 + int(6 * math.sin(ticks * 0.05))
+        flame_len2 = 12 + int(6 * math.cos(ticks * 0.05))
+        pygame.draw.polygon(screen, ORANGE, [(draw_x - 33, draw_y + 30), (draw_x - 25, draw_y + 30), (draw_x - 29, draw_y + 30 + flame_len1)])
+        pygame.draw.polygon(screen, ORANGE, [(draw_x + 25, draw_y + 30), (draw_x + 33, draw_y + 30), (draw_x + 29, draw_y + 30 + flame_len2)])
+        
+        bar_w = 60
+        bar_h = 6
+        bx = draw_x - bar_w // 2
+        by = draw_y - 62
+        pygame.draw.rect(screen, RED, (bx, by, bar_w, bar_h))
+        pygame.draw.rect(screen, GREEN, (bx, by, int(bar_w * max(0.0, self.health / self.max_health)), bar_h))
+        pygame.draw.rect(screen, WHITE, (bx, by, bar_w, bar_h), width=1)
+
+class QuantumAnchor:
+    def __init__(self, x, y, index):
+        self.x = x
+        self.y = y
+        self.index = index
+        self.health = 30.0
+        self.max_health = 30.0
+        self.width = 32
+        self.height = 32
+        self.rect = pygame.Rect(self.x - 16, self.y - 16, 32, 32)
+        
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        ticks = pygame.time.get_ticks()
+        
+        points = []
+        for i in range(4):
+            ang = math.radians(i * 90 + ticks * 0.08)
+            r = 16 + int(3 * math.sin(ticks * 0.01 + i))
+            points.append((draw_x + r * math.cos(ang), draw_y + r * math.sin(ang)))
+        pygame.draw.polygon(screen, GREEN, points, width=2)
+        pygame.draw.circle(screen, WHITE, (int(draw_x), int(draw_y)), 6)
+        
+        bar_w = 40
+        bar_h = 4
+        bx = draw_x - bar_w // 2
+        by = draw_y - 24
+        pygame.draw.rect(screen, RED, (bx, by, bar_w, bar_h))
+        pygame.draw.rect(screen, GREEN, (bx, by, int(bar_w * max(0.0, self.health / self.max_health)), bar_h))
+        pygame.draw.rect(screen, WHITE, (bx, by, bar_w, bar_h), width=1)
+
+class EnergyCell:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.width = 24
+        self.height = 24
+        self.rect = pygame.Rect(self.x - 12, self.y - 12, self.width, self.height)
+
+    def update(self):
+        self.rect.center = (int(self.x), int(self.y))
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        ticks = pygame.time.get_ticks()
+        pulse = int(4 * math.sin(ticks * 0.02))
+        pygame.draw.circle(screen, GOLD, (int(draw_x), int(draw_y)), 10 + pulse)
+        pygame.draw.circle(screen, WHITE, (int(draw_x), int(draw_y)), 5)
+
+class BlackHoleCore:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.width = 120
+        self.height = 120
+        self.health = 80.0
+        self.max_health = 80.0
+        self.rect = pygame.Rect(self.x - 60, self.y - 60, self.width, self.height)
+        self.pull_force = 1.2
+        self.last_shot = 0
+
+    def update(self, player, bullets, game_instance):
+        p_pos = pygame.math.Vector2(player.x + player.width // 2, player.y + player.height // 2)
+        core_pos = pygame.math.Vector2(self.x, self.y)
+        dist = p_pos.distance_to(core_pos)
+        if dist < 400 and dist > 20:
+            pull = (core_pos - p_pos).normalize() * (self.pull_force * (1.0 - dist / 400.0))
+            player.x += pull.x
+            player.y += pull.y
+            player.rect.topleft = (player.x, player.y)
+
+        ticks = pygame.time.get_ticks()
+        if ticks - self.last_shot > 1500:
+            self.last_shot = ticks
+            if game_instance:
+                for i in range(8):
+                    ang = i * (2 * math.pi / 8)
+                    dx = math.cos(ang)
+                    dy = math.sin(ang)
+                    game_instance.enemy_bullets.append(
+                        EnemyBullet(self.x, self.y, dx, dy, color=GREEN, speed=5.0, size=8)
+                    )
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        ticks = pygame.time.get_ticks()
+        
+        for i in range(3):
+            r = 30 + i * 15 + int(6 * math.sin(ticks * 0.01 + i))
+            surf = pygame.Surface((r * 2, r * 2), pygame.SRCALPHA)
+            color = (0, 200, 100, 160 - i * 40)
+            pygame.draw.circle(surf, color, (r, r), r, width=3)
+            screen.blit(surf, (int(draw_x - r), int(draw_y - r)))
+            
+        pygame.draw.circle(screen, BLACK, (int(draw_x), int(draw_y)), 15)
+        
+        bar_w = 80
+        bar_h = 8
+        bx = draw_x - bar_w // 2
+        by = draw_y - 70
+        pygame.draw.rect(screen, RED, (bx, by, bar_w, bar_h))
+        pygame.draw.rect(screen, GREEN, (bx, by, int(bar_w * max(0.0, self.health / self.max_health)), bar_h))
+        pygame.draw.rect(screen, WHITE, (bx, by, bar_w, bar_h), width=1)
+
+class QuantumPortal:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+        self.radius = 35
+        self.rect = pygame.Rect(self.x - self.radius, self.y - self.radius, self.radius * 2, self.radius * 2)
+
+    def update(self):
+        pass
+
+    def draw(self, screen, camera_y, camera_x=0):
+        draw_x = self.x - camera_x
+        draw_y = self.y - camera_y
+        ticks = pygame.time.get_ticks()
+        
+        glow = int(4 * math.sin(ticks * 0.02))
+        color = GREEN if (ticks // 1000) % 2 == 0 else WHITE
+        pygame.draw.circle(screen, color, (int(draw_x), int(draw_y)), self.radius + glow, width=2)
+        pygame.draw.circle(screen, (0, 150, 50, 100), (int(draw_x), int(draw_y)), self.radius - 5)
+
 class BackgroundStructure:
     def __init__(self, zone):
         self.zone = zone
@@ -2462,8 +2916,19 @@ class Player:
             
             'class_tier1': 0,     # Unique Tier 1 class upgrade (Max 3)
             'class_tier2': 0,     # Unique Tier 2 class upgrade (Max 3)
-            'class_tier3': 0      # Unique Tier 3 class ultimate (Max 1)
+            'class_tier3': 0,     # Unique Tier 3 class ultimate (Max 1)
+            
+            'afterburner': 0,     # Max 3 (Dash speed +20% per level)
+            'vector_nozzle': 0,   # Max 3 (Rotation speed +20% per level)
+            'emergency_recharge': 0, # Max 2 (Regen 50% shield once per run)
+            'nanite_repair': 0,   # Max 3 (Hull regen: 0.1/s per level)
+            'ammo_loader': 0      # Max 3 (+2 max ammo for secondary weapons)
         }
+        
+        # Equipped non-weapon slots
+        self.equipped_shield = 'shield'
+        self.equipped_core = 'coolant'
+        self.equipped_engine = 'afterburner'
         
         # Weapon Switching and Ammo Stats
         self.active_primary = 0 # 0: Laser, 1: Shotgun, 2: Railgun
@@ -2514,11 +2979,41 @@ class Player:
         self.has_mod_split = False
         self.has_mod_siphon = False
 
+    def get_active_skill(self, key):
+        base_weapon_map = {
+            'overcharge': 'weapon',
+            'shotgun_mod': 'shotgun_unlocked',
+            'railgun_mod': 'railgun_unlocked',
+            'cluster_torpedo': 'torpedo',
+            'bomb_cap': 'bomb_unlocked',
+            'missile_cap': 'missile_unlocked'
+        }
+        actual_key = base_weapon_map.get(key, key)
+        slots_map = {
+            'shield': 'SHIELD', 'deflector': 'SHIELD', 'emergency_recharge': 'SHIELD',
+            'coolant': 'CORE', 'nanite_repair': 'CORE', 'class_tier1': 'CORE', 'class_tier2': 'CORE', 'class_tier3': 'CORE',
+            'afterburner': 'ENGINE', 'vector_nozzle': 'ENGINE', 'hyperdrive': 'ENGINE',
+            'weapon': 'PRIMARY', 'shotgun_unlocked': 'PRIMARY', 'railgun_unlocked': 'PRIMARY',
+            'torpedo': 'SECONDARY', 'bomb_unlocked': 'SECONDARY', 'missile_unlocked': 'SECONDARY'
+        }
+        slot = slots_map.get(actual_key)
+        if slot:
+            if slot == 'SHIELD' and getattr(self, 'equipped_shield', '') != actual_key: return 0
+            if slot == 'CORE' and getattr(self, 'equipped_core', '') != actual_key: return 0
+            if slot == 'ENGINE' and getattr(self, 'equipped_engine', '') != actual_key: return 0
+            if slot == 'PRIMARY':
+                eq_p = {0: 'weapon', 1: 'shotgun_unlocked', 2: 'railgun_unlocked'}.get(self.active_primary)
+                if eq_p != actual_key: return 0
+            if slot == 'SECONDARY':
+                eq_s = {0: 'torpedo', 1: 'bomb_unlocked', 2: 'missile_unlocked'}.get(self.active_secondary)
+                if eq_s != actual_key: return 0
+        return self.skills.get(key, 0)
+
     def set_class(self, class_name):
         self.class_name = class_name
-        t1 = self.skills.get('class_tier1', 0)
-        t2 = self.skills.get('class_tier2', 0)
-        t3 = self.skills.get('class_tier3', 0)
+        t1 = self.get_active_skill('class_tier1')
+        t2 = self.get_active_skill('class_tier2')
+        t3 = self.get_active_skill('class_tier3')
         
         if class_name == 'RANGER':
             self.damage_multiplier = 1.3
@@ -2610,8 +3105,7 @@ class Player:
                 'special_name': 'Warp Strike', 'special_desc': 'Teleports forward and clears heat.'
             }
             
-        self.max_shields = self.base_max_shields + self.skills['shield']
-        self.shields = self.max_shields
+        self.max_shields = self.base_max_shields + self.get_active_skill('shield')
         self.shields = min(self.shields, self.max_shields)
 
     def award_xp(self, amount):
@@ -2652,12 +3146,24 @@ class Player:
             if hasattr(self, 'is_cloaked'):
                 self.is_cloaked = False
 
-        self.max_shields = self.base_max_shields + self.skills['shield']
-        regen_delay = 3000 if self.skills.get('deflector', 0) > 0 else self.shield_regen_delay
+        # Recalculate max ammo based on ammo_loader skill
+        bonus_ammo = self.get_active_skill('ammo_loader') * 2
+        self.max_torpedo_ammo = 10 + bonus_ammo
+        self.max_bomb_ammo = 5 + bonus_ammo
+        self.max_missile_ammo = 8 + bonus_ammo
+
+        self.max_shields = self.base_max_shields + self.get_active_skill('shield')
+        nanite_level = self.get_active_skill('nanite_repair')
+        if nanite_level > 0 and self.shields < self.max_shields:
+            self.shields = min(self.max_shields, self.shields + 0.003 * nanite_level)
+            
+        regen_delay = 3000 if self.get_active_skill('deflector') > 0 else self.shield_regen_delay
         if self.shields < self.max_shields:
             if current_time - self.last_hit_time > regen_delay:
                 if current_time - self.last_regen_time > self.regen_cooldown:
                     self.shields = min(self.max_shields, self.shields + 1)
+                    global SOUNDS
+                    if SOUNDS: SOUNDS.play('shield_recharge')
                     self.last_regen_time = current_time
 
     def trigger_dash(self, direction, current_time):
@@ -2669,7 +3175,7 @@ class Player:
             direction_vector = pygame.math.Vector2(math.cos(rad), math.sin(rad))
             dir_r = pygame.math.Vector2(-direction_vector.y, direction_vector.x)
             
-            dash_force = 6.0
+            dash_force = 6.0 * (1.0 + self.get_active_skill('afterburner') * 0.20)
             if direction == 'LEFT':
                 self.velocity -= dir_r * dash_force
             else:
@@ -2708,7 +3214,7 @@ class Player:
             angle_diff = (target_angle - self.angle + 180) % 360 - 180
             
             # Rotation speed (degrees per frame) - lower values mean slower turning
-            max_turn = 4.5
+            max_turn = 4.5 * (1.0 + self.get_active_skill('vector_nozzle') * 0.20)
             self.banking_amount = max(-1.0, min(1.0, angle_diff / max_turn))
             if abs(angle_diff) <= max_turn:
                 self.angle = target_angle
@@ -2723,7 +3229,7 @@ class Player:
 
         # Handle Special Ability (E key)
         is_overdrive = (self.class_name == 'RANGER' and current_time < self.ability_timer)
-        if keys[pygame.K_e] and current_time - self.last_ability > self.ability_cooldown * getattr(self, 'ability_cooldown_mod', 1.0):
+        if not is_hub and keys[pygame.K_e] and current_time - self.last_ability > self.ability_cooldown * getattr(self, 'ability_cooldown_mod', 1.0):
             self.last_ability = current_time
             if self.class_name == 'RANGER':
                 self.ability_timer = current_time + 4000 # 4 second duration
@@ -2757,7 +3263,7 @@ class Player:
                 self.velocity += self.direction * 12.0
         
         # Handle Specialist Ability (Q key)
-        if keys[pygame.K_q] and current_time - self.last_special > self.special_cooldown:
+        if not is_hub and keys[pygame.K_q] and current_time - self.last_special > self.special_cooldown:
             self.last_special = current_time
             if self.class_name == 'RANGER':
                 self.special_timer = current_time + 2000
@@ -2801,7 +3307,7 @@ class Player:
             self.speed_multiplier = 1.0
 
         # Handle Flares (Left Shift)
-        if keys[pygame.K_LSHIFT] and self.flare_ammo > 0 and current_time - self.last_flare_time > self.flare_cooldown:
+        if not is_hub and keys[pygame.K_LSHIFT] and self.flare_ammo > 0 and current_time - self.last_flare_time > self.flare_cooldown:
             self.flare_ammo -= 1
             self.last_flare_time = current_time
             # Spawn 10 flares in a fan-shaped spread behind the player
@@ -2867,7 +3373,7 @@ class Player:
 
         mouse_buttons = pygame.mouse.get_pressed()
         
-        actual_cool_rate = self.cool_rate * (1.0 + 0.25 * self.skills['coolant'])
+        actual_cool_rate = self.cool_rate * (1.0 + 0.25 * self.get_active_skill('coolant'))
         
         # Plasma Biome Heat Gimmick
         is_plasma = getattr(self, 'in_plasma_biome', False) # Set by Game instance
@@ -2881,9 +3387,9 @@ class Player:
                 self.overheated = False
 
         # Left click to shoot standard bullets
-        if mouse_buttons[0]:
+        if not is_hub and mouse_buttons[0]:
             if not self.overheated:
-                actual_shoot_delay = self.shoot_delay * 0.70 if self.skills.get('overcharge', 0) > 0 else self.shoot_delay
+                actual_shoot_delay = self.shoot_delay * 0.70 if self.get_active_skill('overcharge') > 0 else self.shoot_delay
                 if is_overdrive:
                     actual_shoot_delay *= 0.5 # Double fire rate
                 
@@ -2895,7 +3401,7 @@ class Player:
                     b_speed = 18 * getattr(self, 'bullet_speed_mod', 1.0)
 
                     if self.active_primary == 0: # Laser
-                        weapon_level = self.skills['weapon']
+                        weapon_level = self.get_active_skill('weapon')
                         if weapon_level == 0:
                             b = Bullet(tip_x, tip_y, self.direction.x, self.direction.y, speed=b_speed)
                             if self.has_mod_piercing: b.piercing = True
@@ -2927,8 +3433,8 @@ class Player:
                             if self.heat >= self.max_heat:
                                 self.overheated = True
 
-                    elif self.active_primary == 1 and self.skills['shotgun_unlocked']: # Shotgun
-                        sm = self.skills['shotgun_mod']
+                    elif self.active_primary == 1 and self.get_active_skill('shotgun_unlocked'): # Shotgun
+                        sm = self.get_active_skill('shotgun_mod')
                         final_heat = 12.0 - (sm * 1.5)
                         for offset in [-20, -10, 0, 10, 20]:
                             r_dir = self.direction.rotate(offset)
@@ -2939,9 +3445,9 @@ class Player:
                             self.heat = min(self.max_heat, self.heat + heat_gain)
                             if self.heat >= self.max_heat:
                                 self.overheated = True
-
-                    elif self.active_primary == 2 and self.skills['railgun_unlocked']: # Railgun
-                        rm = self.skills['railgun_mod']
+ 
+                    elif self.active_primary == 2 and self.get_active_skill('railgun_unlocked'): # Railgun
+                        rm = self.get_active_skill('railgun_mod')
                         final_heat = 15.0
                         projectiles.append(Bullet(tip_x, tip_y, self.direction.x, self.direction.y, speed=25, life=100, piercing=True, damage=6.0 + 2.0*rm, color=CYAN))
                         
@@ -2950,30 +3456,30 @@ class Player:
                             self.heat = min(self.max_heat, self.heat + heat_gain)
                             if self.heat >= self.max_heat:
                                 self.overheated = True
-
+ 
         # Right click to shoot Secondary weapons
-        if mouse_buttons[2]:
+        if not is_hub and mouse_buttons[2]:
             tip_x = center_x + self.direction.x * (self.height // 2)
             tip_y = center_y + self.direction.y * (self.height // 2)
             
             if self.active_secondary == 0: # Torpedo
-                actual_torpedo_delay = self.torpedo_delay * (1.0 - 0.15 * self.skills['torpedo'])
+                actual_torpedo_delay = self.torpedo_delay * (1.0 - 0.15 * self.get_active_skill('torpedo'))
                 if current_time - self.last_torpedo > actual_torpedo_delay:
                     self.last_torpedo = current_time
-                    scale = 1.0 + 0.15 * self.skills['torpedo']
+                    scale = 1.0 + 0.15 * self.get_active_skill('torpedo')
                     projectiles.append(Torpedo(tip_x, tip_y, self.direction.x, self.direction.y, scale))
             
-            elif self.active_secondary == 1 and self.skills['bomb_unlocked'] and self.bomb_ammo > 0: # Bomb
+            elif self.active_secondary == 1 and self.get_active_skill('bomb_unlocked') and self.bomb_ammo > 0: # Bomb
                 if current_time - self.last_secondary > 500:
                     self.last_secondary = current_time
                     self.bomb_ammo -= 1
-                    projectiles.append(ProxBomb(tip_x, tip_y, self.direction.x, self.direction.y, scale=1.0 + 0.15*self.skills['bomb_cap']))
+                    projectiles.append(ProxBomb(tip_x, tip_y, self.direction.x, self.direction.y, scale=1.0 + 0.15*self.get_active_skill('bomb_cap')))
                     
-            elif self.active_secondary == 2 and self.skills['missile_unlocked'] and self.missile_ammo > 0: # Missile
+            elif self.active_secondary == 2 and self.get_active_skill('missile_unlocked') and self.missile_ammo > 0: # Missile
                 if current_time - self.last_secondary > 400:
                     self.last_secondary = current_time
                     self.missile_ammo -= 1
-                    projectiles.append(HomingMissile(tip_x, tip_y, self.direction.x, self.direction.y, scale=1.0 + 0.15*self.skills['missile_cap'], shooter=self))
+                    projectiles.append(HomingMissile(tip_x, tip_y, self.direction.x, self.direction.y, scale=1.0 + 0.15*self.get_active_skill('missile_cap'), shooter=self))
 
         return projectiles, new_flares, new_support, new_drones, new_crystals
 
@@ -3113,17 +3619,55 @@ class Game:
         self.player_name = ""
         self.state = 'INTRO'
         self.intro_start_time = pygame.time.get_ticks()
+        # State Transitions
+        self.transition_state = None
+        self.transition_start_time = 0
+        self.transition_duration = 1000
         self.current_zone = 'HUB'
         self.selected_class = 'RANGER'
         self.camera_y = 0
         self.camera_x = 0
-        self.screen_shake = 0
         self.debug_invincible = False
+        self.dev_mode = False
+        self.tutorial_stage = 0
+        self.tutorial_dialogues = [
+            {
+                "title": "WELCOME TO TRAINING RANGE",
+                "text": "Greetings, Pilot! This range is completely safe. Let's learn the cockpit controls first. Press W to accelerate/thrust, S to decelerate/reverse, and A/D to steer your ship's banking angle.",
+                "action": "Next Tip"
+            },
+            {
+                "title": "WEAPON SYSTEMS",
+                "text": "Your ship is armed. Left-Click or Hold SPACEBAR to fire your Primary Cannons. Press Q to fire Homing Missiles, E to drop Proximity Bombs, and SHIFT to execute a Tactical Phase Shift (Dash).",
+                "action": "Next Tip"
+            },
+            {
+                "title": "MATERIALS & UPGRADES",
+                "text": "Enemies and meteors drop Scrap Metals (golden boxes). Gather them to purchase permanent upgrades and interchangeable modules at the Engineering Hub.",
+                "action": "Next Tip"
+            },
+            {
+                "title": "SLOT-BASED INVENTORY",
+                "text": "In the Hub shops, you can drag and drop modules to customize your Ship Class. Drag parts into the recycle bin for a scrap refund, or equip them into slots to gain unique passive bonuses.",
+                "action": "Next Tip"
+            },
+            {
+                "title": "WARPING OUT",
+                "text": "Collect 5 Matrix Cores in normal levels to spawn the exit wormhole warp gates. Enter the warp gate to return to the Hub station or complete your campaign objectives.",
+                "action": "Finish Tutorial"
+            }
+        ]
         self.input_active = False # For player name input
         self.dragging_volume = False
         self.dragging_tint = False
         self.dragging_vignette = False
         self.dragging_softness = False
+        
+        # Drag and drop upgrades variables
+        self.dragged_part = None
+        self.dragged_origin = None
+        self.dragged_part_key = None
+        self.drag_mouse_offset = (0, 0)
         self.filter_tint_alpha = 50
         self.filter_vignette_alpha = 100
         self.filter_softness = 15
@@ -3221,6 +3765,7 @@ class Game:
         self.active_quest = self.quests[min(len(self.quests)-1, self.campaign_stage - 1)]
         
         self.unlocked_zones = {
+            'TUTORIAL': True,
             'ASTEROIDS': True, 
             'VULCAN': self.campaign_stage >= 2, 
             'AQUARIS': self.campaign_stage >= 2,
@@ -3242,6 +3787,12 @@ class Game:
         self.escape_blackhole_pos = None
         self.escape_blackhole_radius = 0.0
         self.victory_start_time = 0
+        self._played_victory_music = False
+        self.dragged_part = None
+        self.dragged_origin = None
+        self.dragged_part_key = None
+        self.drag_mouse_offset = (0, 0)
+        self._emergency_recharge_used = 0
         self.player_death_timer = 0
         self.active_hub_portal = None
         self.shield_crystals = []
@@ -3251,9 +3802,9 @@ class Game:
         self.solar_flare_y = 0
         
         self.enemy_spawn_time = 0
-        self.enemy_spawn_delay = 4000
+        self.enemy_spawn_delay = 3200
         self.meteor_spawn_time = 0
-        self.meteor_spawn_delay = 2000
+        self.meteor_spawn_delay = 1600
         
         # Procedural height states
         self.highest_y_generated = 600
@@ -3261,6 +3812,22 @@ class Game:
         self.wormhole_spawned = False
         self.wormhole_charge_timer = 0
         
+        # Pre-render a beautiful default nebula surface (for HUB / Menu)
+        self.nebula_surf = pygame.Surface((400, 300), pygame.SRCALPHA)
+        self.nebula_surf.fill((0, 0, 0, 0))
+        theme_color = BLUE
+        for _ in range(6):
+            cx = random.randint(50, 350)
+            cy = random.randint(50, 250)
+            radius = random.randint(80, 150)
+            r_var = max(0, min(255, theme_color[0] + random.randint(-30, 30)))
+            g_var = max(0, min(255, theme_color[1] + random.randint(-30, 30)))
+            b_var = max(0, min(255, theme_color[2] + random.randint(-30, 30)))
+            for layer in range(5):
+                alpha = int(18 / (layer + 1))
+                lr = int(radius * (1.0 + layer * 0.25))
+                pygame.draw.circle(self.nebula_surf, (r_var, g_var, b_var, alpha), (cx, cy), lr)
+
         self.stars_color = WHITE
         self._build_stars()
 
@@ -3282,7 +3849,43 @@ class Game:
             self.stars.append([x, y, depth, size, color, twinkle_speed, twinkle_offset])
 
     def _draw_background_nebula(self, screen, camera_y, camera_x, theme_color):
-        pass
+        if getattr(self, 'nebula_surf', None) is not None:
+            # Scroll slowly in parallax
+            ny = int(-camera_y * 0.08) % VIRTUAL_HEIGHT
+            nx = int(-camera_x * 0.08) % VIRTUAL_WIDTH
+            
+            # Smooth scale pre-rendered low-res nebula surface for soft gaussian look
+            scaled_nebula = pygame.transform.smoothscale(self.nebula_surf, (VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+            
+            # Draw tiled
+            screen.blit(scaled_nebula, (nx, ny))
+            screen.blit(scaled_nebula, (nx - VIRTUAL_WIDTH, ny))
+            screen.blit(scaled_nebula, (nx, ny - VIRTUAL_HEIGHT))
+            screen.blit(scaled_nebula, (nx - VIRTUAL_WIDTH, ny - VIRTUAL_HEIGHT))
+
+    def _draw_cyber_grid(self, surface, camera_y, camera_x, theme_color):
+        grid_spacing = 80
+        grid_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+        
+        offset_y = int(-camera_y) % grid_spacing
+        offset_x = int(-camera_x) % grid_spacing
+        
+        line_color = (theme_color[0], theme_color[1], theme_color[2], 12)
+        
+        for gy in range(offset_y - grid_spacing, VIRTUAL_HEIGHT + grid_spacing, grid_spacing):
+            pygame.draw.line(grid_surf, line_color, (0, gy), (VIRTUAL_WIDTH, gy), 1)
+        for gx in range(offset_x - grid_spacing, VIRTUAL_WIDTH + grid_spacing, grid_spacing):
+            pygame.draw.line(grid_surf, line_color, (gx, 0), (gx, VIRTUAL_HEIGHT), 1)
+            
+        ticks = pygame.time.get_ticks()
+        node_color = (theme_color[0], theme_color[1], theme_color[2], 40)
+        
+        shift_y = int(ticks * 0.04) % grid_spacing
+        for gy in range(offset_y - grid_spacing + shift_y, VIRTUAL_HEIGHT + grid_spacing, grid_spacing):
+            for gx in range(offset_x - grid_spacing, VIRTUAL_WIDTH + grid_spacing, grid_spacing * 2):
+                pygame.draw.circle(grid_surf, node_color, (gx, gy), 2)
+                
+        surface.blit(grid_surf, (0, 0))
 
     def _generate_planet_clouds(self, zone_name):
         tex_w, tex_h = 1024, 1024
@@ -3394,6 +3997,8 @@ class Game:
         self.static_obstacles = []
         self.data_uplinks = []
         self.shockwaves = []
+        self.particles = []
+        self.shooting_stars = []
         self.materials_collected = 0
         self.player.speed_multiplier = 1.0
         
@@ -3414,6 +4019,39 @@ class Game:
         self.solar_flare_state = 'IDLE'
         self.solar_flare_timer = 0
         self.solar_flare_y = 0
+        
+        # Custom objective variables
+        self.convoy = None
+        self.convoy_defend_timer = 0.0
+        if zone_name == 'VULCAN':
+            self.convoy = ConvoyShip(VIRTUAL_WIDTH // 2, 700)
+            self.convoy_defend_timer = 45.0
+            self.player.x = VIRTUAL_WIDTH // 2 - 150
+            self.player.y = 800
+        
+        self.supernova_y = None
+        if zone_name == 'NEBULA':
+            self.supernova_y = 1200
+            self.supernova_speed = 1.6
+            
+        self.energy_cells = []
+        self.energy_cells_collected = 0
+        
+        self.black_hole_core = None
+        self.quantum_portals = []
+        self.quantum_anchors = []
+        self.quantum_dimension = 'NORMAL'
+        if zone_name == 'QUANTUM':
+            self.black_hole_core = BlackHoleCore(VIRTUAL_WIDTH // 2, -3500)
+            self.quantum_portals.append(QuantumPortal(400, -800))
+            self.quantum_portals.append(QuantumPortal(800, -1800))
+            self.quantum_portals.append(QuantumPortal(500, -2800))
+            self.quantum_anchors.append(QuantumAnchor(300, -1000, 1))
+            self.quantum_anchors.append(QuantumAnchor(900, -2000, 2))
+            self.quantum_anchors.append(QuantumAnchor(450, -3000, 3))
+            
+        self.void_enemies_killed = 0
+        self.tutorial_stage = 0
         
         self.highest_y_generated = 600
         self.materials_spawned_count = 0
@@ -3455,6 +4093,22 @@ class Game:
         self.camera_y = self.player.y - VIRTUAL_HEIGHT // 2
         self.camera_x = self.player.x - VIRTUAL_WIDTH // 2
         
+        # Pre-render a beautiful biome-specific nebula surface
+        self.nebula_surf = pygame.Surface((400, 300), pygame.SRCALPHA)
+        self.nebula_surf.fill((0, 0, 0, 0))
+        theme_color = BIOME_CONFIGS.get(zone_name, {'theme_color': GRAY})['theme_color']
+        for _ in range(6):
+            cx = random.randint(50, 350)
+            cy = random.randint(50, 250)
+            radius = random.randint(80, 150)
+            r_var = max(0, min(255, theme_color[0] + random.randint(-30, 30)))
+            g_var = max(0, min(255, theme_color[1] + random.randint(-30, 30)))
+            b_var = max(0, min(255, theme_color[2] + random.randint(-30, 30)))
+            for layer in range(5):
+                alpha = int(18 / (layer + 1))
+                lr = int(radius * (1.0 + layer * 0.25))
+                pygame.draw.circle(self.nebula_surf, (r_var, g_var, b_var, alpha), (cx, cy), lr)
+
         # Procedurally generate initial starting surroundings chunk
         self.bg_structure = BackgroundStructure(zone_name)
         self._procedurally_generate_chunk(600, -1000)
@@ -3525,19 +4179,32 @@ class Game:
                 if not overlap:
                     self.static_obstacles.append(Meteor(ox, oy, is_static=True))
 
-        # Spawn Matrix Cores rarely and without limit (30% chance in early levels, 20% in others)
-        core_chance = 0.30 if self.current_zone in ('ASTEROIDS', 'VULCAN', 'AQUARIS') else 0.20
-        if random.random() < core_chance:
-            cx = random.randint(-2500, VIRTUAL_WIDTH + 2500)
-            cy = random.randint(int(to_y), int(from_y))
-            # Space them out to prevent clusters
-            overlap = False
-            for mat in self.materials:
-                if pygame.math.Vector2(cx, cy).distance_to(pygame.math.Vector2(mat.x, mat.y)) < 300:
-                    overlap = True
-            if not overlap:
-                self.materials.append(Material(cx, cy))
-                self.materials_spawned_count += 1
+        # Spawn Matrix Cores only in ASTEROIDS
+        if self.current_zone == 'ASTEROIDS':
+            core_chance = 0.30
+            if random.random() < core_chance:
+                cx = random.randint(-2500, VIRTUAL_WIDTH + 2500)
+                cy = random.randint(int(to_y), int(from_y))
+                overlap = False
+                for mat in self.materials:
+                    if pygame.math.Vector2(cx, cy).distance_to(pygame.math.Vector2(mat.x, mat.y)) < 300:
+                        overlap = True
+                if not overlap:
+                    self.materials.append(Material(cx, cy))
+                    self.materials_spawned_count += 1
+
+        # Spawn Energy Cells only in PLASMA
+        if self.current_zone == 'PLASMA':
+            cell_chance = 0.35
+            if random.random() < cell_chance:
+                cx = random.randint(-1500, VIRTUAL_WIDTH + 1500)
+                cy = random.randint(int(to_y), int(from_y))
+                overlap = False
+                for cell in self.energy_cells:
+                    if pygame.math.Vector2(cx, cy).distance_to(pygame.math.Vector2(cell.x, cell.y)) < 300:
+                        overlap = True
+                if not overlap:
+                    self.energy_cells.append(EnergyCell(cx, cy))
 
         theme_color = BIOME_CONFIGS.get(self.current_zone, {}).get('theme_color', PURPLE)
         for _ in range(random.randint(3, 5)):
@@ -3592,14 +4259,28 @@ class Game:
             self.shockwaves.append(ShockwaveRing(x, y, count * 3, ring_color))
         self.screen_shake = min(15, self.screen_shake + int(count * 0.5))
 
-    def _damage_player(self, current_time, damage=1):
+    def _damage_player(self, current_time, damage=1, sound_type='hit'):
+        if damage <= 0:
+            return
         if self.player.is_dead or self.player.invulnerable or self.debug_invincible:
             return
-        if SOUNDS: SOUNDS.play('hit')
+        if SOUNDS: SOUNDS.play(sound_type)
         
+        had_shields = self.player.shields > 0
         if self.player.shields > 0:
             self.player.shield_bubble_timer = current_time
         self.player.shields -= damage
+        if had_shields and self.player.shields <= 0 and not self.player.is_dead:
+            recharges_remaining = self.player.skills.get('emergency_recharge', 0)
+            used_count = getattr(self, '_emergency_recharge_used', 0)
+            if recharges_remaining > used_count:
+                self._emergency_recharge_used = used_count + 1
+                self.player.shields = self.player.max_shields * 0.5
+                if SOUNDS: SOUNDS.play('shield_recharge')
+                for _ in range(25):
+                    self.particles.append(Particle(self.player.x + self.player.width//2, self.player.y + self.player.height//2, CYAN))
+            else:
+                if SOUNDS: SOUNDS.play('shield_down')
         self.player.last_hit_time = current_time
         self.player.last_regen_time = current_time
         self.player.invulnerable = True
@@ -3655,6 +4336,198 @@ class Game:
             if anomaly_pos.distance_to(pygame.math.Vector2(a.rect.center)) < radius:
                 self.detonate_anomaly(a)
 
+    def draw_part_icon(self, screen, x, y, key, color, ticks):
+        hex_pts = []
+        for a in range(6):
+            ang = math.radians(a * 60 - 30)
+            hex_pts.append((x + 11 * math.cos(ang), y + 11 * math.sin(ang)))
+        pygame.draw.polygon(screen, (30, 30, 45), hex_pts)
+        pygame.draw.polygon(screen, color, hex_pts, 1)
+        
+        if key in ('shield', 'deflector', 'emergency_recharge'):
+            pygame.draw.polygon(screen, color, [
+                (x, y - 6), (x + 6, y - 3), (x + 5, y + 3), (x, y + 7), (x - 5, y + 3), (x - 6, y - 3)
+            ], 1)
+            pygame.draw.line(screen, color, (x, y - 3), (x, y + 4))
+        elif key in ('coolant', 'nanite_repair'):
+            if key == 'coolant':
+                pygame.draw.lines(screen, color, True, [
+                    (x, y - 7), (x + 4, y - 1), (x + 4, y + 5), (x - 4, y + 5), (x - 4, y - 1)
+                ], 1)
+            else:
+                pygame.draw.line(screen, color, (x - 5, y), (x + 5, y), 2)
+                pygame.draw.line(screen, color, (x, y - 5), (x, y + 5), 2)
+        elif key in ('class_tier1', 'class_tier2', 'class_tier3'):
+            pygame.draw.lines(screen, color, False, [
+                (x - 5, y - 3), (x, y - 7), (x + 5, y - 3)
+            ], 1)
+            pygame.draw.lines(screen, color, False, [
+                (x - 5, y + 1), (x, y - 3), (x + 5, y + 1)
+            ], 1)
+        elif key in ('afterburner', 'vector_nozzle', 'hyperdrive'):
+            pygame.draw.polygon(screen, color, [
+                (x - 4, y - 5), (x + 4, y - 5), (x + 6, y + 3), (x - 6, y + 3)
+            ], 1)
+            pygame.draw.line(screen, ORANGE, (x, y + 3), (x, y + 7))
+        elif key in ('weapon', 'overcharge', 'shotgun_unlocked', 'railgun_unlocked', 'shotgun_mod', 'railgun_mod'):
+            pygame.draw.circle(screen, color, (x, y), 6, width=1)
+            pygame.draw.line(screen, color, (x - 8, y), (x + 8, y))
+            pygame.draw.line(screen, color, (x, y - 8), (x, y + 8))
+        elif key in ('torpedo', 'cluster_torpedo', 'bomb_unlocked', 'missile_unlocked', 'bomb_cap', 'missile_cap', 'ammo_loader'):
+            pygame.draw.polygon(screen, color, [
+                (x, y - 7), (x - 4, y + 1), (x - 3, y + 6), (x + 3, y + 6), (x + 4, y + 1)
+            ], 1)
+        else:
+            pygame.draw.circle(screen, color, (x, y), 4)
+
+    def get_all_parts(self):
+        all_parts = {
+            # --- ENGINEERING / SHIELD slot ---
+            'shield':           {'name': 'Shield Gen',    'slot': 'SHIELD',  'type': 'ENGINEERING', 'max_level': 4,
+                                 'icon_color': (0, 180, 255),
+                                 'desc': '+1 Max Shield per rank (up to 4 ranks).',
+                                 'cost_func': lambda p: (p.skills['shield'] + 1) * 75,
+                                 'scrap_func': lambda p: (p.skills['shield'] + 1) * 1,   'deps': []},
+            'deflector':        {'name': 'Deflector',     'slot': 'SHIELD',  'type': 'ENGINEERING', 'max_level': 1,
+                                 'icon_color': (0, 140, 220),
+                                 'desc': 'Cuts shield recharge delay from 5 s → 3 s.',
+                                 'cost_func': lambda p: 200,
+                                 'scrap_func': lambda p: 3,                              'deps': [('shield', 2)]},
+            'emergency_recharge':{'name': 'E-Recharge',   'slot': 'SHIELD',  'type': 'ENGINEERING', 'max_level': 2,
+                                 'icon_color': (60, 210, 255),
+                                 'desc': 'Restores 50 % of max shield once on depletion.',
+                                 'cost_func': lambda p: (p.skills['emergency_recharge'] + 1) * 150,
+                                 'scrap_func': lambda p: (p.skills['emergency_recharge'] + 1) * 3, 'deps': [('shield', 2)]},
+            # --- ENGINEERING / CORE slot ---
+            'coolant':          {'name': 'Coolant',       'slot': 'CORE',    'type': 'ENGINEERING', 'max_level': 4,
+                                 'icon_color': (0, 255, 200),
+                                 'desc': '+25 % weapon cool-down rate per rank.',
+                                 'cost_func': lambda p: (p.skills['coolant'] + 1) * 60,
+                                 'scrap_func': lambda p: (p.skills['coolant'] + 1) * 1, 'deps': []},
+            'nanite_repair':    {'name': 'Nanite Rep',    'slot': 'CORE',    'type': 'ENGINEERING', 'max_level': 3,
+                                 'icon_color': (0, 255, 150),
+                                 'desc': '+0.003 passive shield regen per frame per rank.',
+                                 'cost_func': lambda p: (p.skills['nanite_repair'] + 1) * 120,
+                                 'scrap_func': lambda p: (p.skills['nanite_repair'] + 1) * 2, 'deps': [('coolant', 1)]},
+            'class_tier1':      {'name': self.player.class_upgrades.get('tier1_name', 'Class Upgrade I'),
+                                 'slot': 'CORE',    'type': 'ENGINEERING', 'max_level': 3,
+                                 'icon_color': (180, 100, 255),
+                                 'desc': self.player.class_upgrades.get('tier1_desc', 'Class trait upgrade.'),
+                                 'cost_func': lambda p: (p.skills['class_tier1'] + 1) * 120,
+                                 'scrap_func': lambda p: (p.skills['class_tier1'] + 1) * 2, 'deps': []},
+            'class_tier2':      {'name': self.player.class_upgrades.get('tier2_name', 'Class Upgrade II'),
+                                 'slot': 'CORE',    'type': 'ENGINEERING', 'max_level': 2,
+                                 'icon_color': (200, 120, 255),
+                                 'desc': self.player.class_upgrades.get('tier2_desc', 'Advanced class trait.'),
+                                 'cost_func': lambda p: (p.skills['class_tier2'] + 1) * 180,
+                                 'scrap_func': lambda p: (p.skills['class_tier2'] + 1) * 3, 'deps': [('class_tier1', 1)]},
+            'class_tier3':      {'name': self.player.class_upgrades.get('tier3_name', 'Class Upgrade III'),
+                                 'slot': 'CORE',    'type': 'ENGINEERING', 'max_level': 1,
+                                 'icon_color': (230, 150, 255),
+                                 'desc': self.player.class_upgrades.get('tier3_desc', 'Elite class specialisation.'),
+                                 'cost_func': lambda p: 350,
+                                 'scrap_func': lambda p: 5, 'deps': [('class_tier2', 1)]},
+            # --- ENGINEERING / ENGINE slot ---
+            'hyperdrive':       {'name': 'Hyperdrive',    'slot': 'ENGINE',  'type': 'ENGINEERING', 'max_level': 1,
+                                 'icon_color': (255, 200, 0),
+                                 'desc': 'Reduces warp charge delay 3 s → 1 s.',
+                                 'cost_func': lambda p: 350,
+                                 'scrap_func': lambda p: 6, 'deps': [('shield', 2), ('coolant', 2)]},
+            'afterburner':      {'name': 'Afterburner',   'slot': 'ENGINE',  'type': 'ENGINEERING', 'max_level': 3,
+                                 'icon_color': (255, 140, 0),
+                                 'desc': '+20 % dash burst speed per rank.',
+                                 'cost_func': lambda p: (p.skills['afterburner'] + 1) * 100,
+                                 'scrap_func': lambda p: (p.skills['afterburner'] + 1) * 2, 'deps': []},
+            'vector_nozzle':    {'name': 'Vector Nozzle', 'slot': 'ENGINE',  'type': 'ENGINEERING', 'max_level': 3,
+                                 'icon_color': (255, 170, 50),
+                                 'desc': '+20 % turn rate per rank.',
+                                 'cost_func': lambda p: (p.skills['vector_nozzle'] + 1) * 80,
+                                 'scrap_func': lambda p: (p.skills['vector_nozzle'] + 1) * 2, 'deps': []},
+            # --- WEAPONRY / WEAPON slot ---
+            'weapon':           {'name': 'Multi-Cannon',  'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                 'icon_color': (255, 80, 80),
+                                 'desc': 'Unlocks dual Laser fire mode.',
+                                 'cost_func': lambda p: 200,
+                                 'scrap_func': lambda p: 4, 'deps': []},
+            'overcharge':       {'name': 'Overcharger',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                 'icon_color': (255, 50, 50),
+                                 'desc': 'Laser fire-rate -30 % shoot delay.',
+                                 'cost_func': lambda p: 250,
+                                 'scrap_func': lambda p: 4, 'deps': [('weapon', 1)]},
+            'shotgun_unlocked': {'name': 'Buy Shotgun',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                 'icon_color': (200, 80, 40),
+                                 'desc': 'Unlock CQC Scatter Shotgun primary.',
+                                 'cost_func': lambda p: 300,
+                                 'scrap_func': lambda p: 5, 'deps': []},
+            'shotgun_mod':      {'name': 'Shotgun Tune',  'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 3,
+                                 'icon_color': (220, 100, 60),
+                                 'desc': '+15 % shotgun stats per rank.',
+                                 'cost_func': lambda p: (p.skills['shotgun_mod'] + 1) * 100,
+                                 'scrap_func': lambda p: (p.skills['shotgun_mod'] + 1) * 2, 'deps': [('shotgun_unlocked', 1)]},
+            'railgun_unlocked': {'name': 'Buy Railgun',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                 'icon_color': (160, 60, 200),
+                                 'desc': 'Unlock Tachyonic Railgun primary.',
+                                 'cost_func': lambda p: 500,
+                                 'scrap_func': lambda p: 10, 'deps': []},
+            'railgun_mod':      {'name': 'Railgun Tune',  'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 3,
+                                 'icon_color': (180, 80, 220),
+                                 'desc': 'Reduce charge delay & boost projectile velocity.',
+                                 'cost_func': lambda p: (p.skills['railgun_mod'] + 1) * 150,
+                                 'scrap_func': lambda p: (p.skills['railgun_mod'] + 1) * 4, 'deps': [('railgun_unlocked', 1)]},
+            'torpedo':          {'name': 'Fusion Torpedo', 'slot': 'WEAPON', 'type': 'WEAPONRY',    'max_level': 4,
+                                 'icon_color': (255, 200, 0),
+                                 'desc': '-15 % cooldown, +15 % blast radius per rank.',
+                                 'cost_func': lambda p: (p.skills['torpedo'] + 1) * 80,
+                                 'scrap_func': lambda p: (p.skills['torpedo'] + 1) * 1, 'deps': []},
+            'cluster_torpedo':  {'name': 'Cluster War',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                 'icon_color': (255, 220, 30),
+                                 'desc': 'Torpedo spawns 3 secondary blasts on impact.',
+                                 'cost_func': lambda p: 300,
+                                 'scrap_func': lambda p: 5, 'deps': [('torpedo', 2)]},
+            'bomb_unlocked':    {'name': 'Buy Prox Bomb', 'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                 'icon_color': (200, 120, 0),
+                                 'desc': 'Unlock Proximity-fused Detonation Bomb.',
+                                 'cost_func': lambda p: 200,
+                                 'scrap_func': lambda p: 3, 'deps': []},
+            'bomb_cap':         {'name': 'Bomb Payload',  'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 3,
+                                 'icon_color': (220, 140, 20),
+                                 'desc': '+1 max bomb cap & larger blast radius per rank.',
+                                 'cost_func': lambda p: (p.skills['bomb_cap'] + 1) * 80,
+                                 'scrap_func': lambda p: (p.skills['bomb_cap'] + 1) * 2, 'deps': [('bomb_unlocked', 1)]},
+            'missile_unlocked': {'name': 'Buy Missile',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                 'icon_color': (100, 200, 80),
+                                 'desc': 'Unlock Smart-Targeting Homing Missile.',
+                                 'cost_func': lambda p: 400,
+                                 'scrap_func': lambda p: 7, 'deps': []},
+            'missile_cap':      {'name': 'Missile Pay',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 3,
+                                 'icon_color': (120, 220, 100),
+                                 'desc': '+1 max missile cap & +20 % flight speed per rank.',
+                                 'cost_func': lambda p: (p.skills['missile_cap'] + 1) * 120,
+                                 'scrap_func': lambda p: (p.skills['missile_cap'] + 1) * 3, 'deps': [('missile_unlocked', 1)]},
+            'ammo_loader':      {'name': 'Ammo Loader',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 3,
+                                 'icon_color': (80, 220, 180),
+                                 'desc': '+2 max ammo cap for all secondary weapons per rank.',
+                                 'cost_func': lambda p: (p.skills['ammo_loader'] + 1) * 100,
+                                 'scrap_func': lambda p: (p.skills['ammo_loader'] + 1) * 2, 'deps': []},
+        }
+        coords = {
+            'shield': (0, 0, 'SHIELD'), 'deflector': (0, 1, 'SHIELD'), 'emergency_recharge': (0, 2, 'SHIELD'),
+            'coolant': (1, 0, 'CORE'), 'nanite_repair': (1, 1, 'CORE'),
+            'class_tier1': (2, 0, 'CORE'), 'class_tier2': (2, 1, 'CORE'), 'class_tier3': (2, 2, 'CORE'),
+            'afterburner': (3, 0, 'ENGINE'), 'vector_nozzle': (3, 1, 'ENGINE'), 'hyperdrive': (3, 2, 'ENGINE'),
+            
+            'weapon': (0, 0, 'PRIMARY'), 'overcharge': (0, 1, 'PRIMARY'), 'ammo_loader': (0, 2, 'SECONDARY'),
+            'shotgun_unlocked': (1, 0, 'PRIMARY'), 'shotgun_mod': (1, 1, 'PRIMARY'), 'bomb_unlocked': (1, 2, 'SECONDARY'), 'bomb_cap': (1, 3, 'SECONDARY'),
+            'railgun_unlocked': (2, 0, 'PRIMARY'), 'railgun_mod': (2, 1, 'PRIMARY'), 'missile_unlocked': (2, 2, 'SECONDARY'), 'missile_cap': (2, 3, 'SECONDARY'),
+            'torpedo': (3, 0, 'SECONDARY'), 'cluster_torpedo': (3, 1, 'SECONDARY')
+        }
+        for k, (c, r, s) in coords.items():
+            if k in all_parts:
+                all_parts[k]['col'] = c
+                all_parts[k]['row'] = r
+                all_parts[k]['slot'] = s
+        return all_parts
+
     def _handle_events(self):
         global SCREEN_WIDTH, SCREEN_HEIGHT
         current_time = pygame.time.get_ticks()
@@ -3695,6 +4568,12 @@ class Game:
                 vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
                 vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
                 
+                if self.state == 'INTRO':
+                    if not self.transition_state:
+                        self.transition_state = 'INTRO_TO_MAIN_MENU'
+                        self.transition_start_time = pygame.time.get_ticks()
+                    return
+
                 # Sliders checks
                 if self.state in ('MAIN_MENU', 'CLASS_SELECT', 'PAUSED'):
                     # Volume slider
@@ -3759,7 +4638,7 @@ class Game:
                         self.current_zone = 'HUB'
 
                 # Upgrade Shop clicks (only permitted in the Hub)
-                if self.state == 'PAUSED' and self.current_zone == 'HUB':
+                if self.state == 'PAUSED' and self.current_zone == 'HUB' and self.hub_station_active not in ('WEAPONRY', 'ENGINEERING'):
                     # Weapon Selection logic
                     # Primary selection
                     for i in range(3):
@@ -3776,57 +4655,156 @@ class Game:
                                 self.player.active_secondary = i
 
                 if self.state == 'PAUSED' and self.current_zone == 'HUB' and self.hub_station_active in ('ENGINEERING', 'WEAPONRY'):
+                    all_parts = self.get_all_parts()
                     nodes_data = {
-                        'shield': {'max_level': 4, 'cost_func': lambda p: (p.skills['shield'] + 1) * 75, 'scrap_cost_func': lambda p: (p.skills['shield'] + 1) * 1, 'deps': [], 'col': 1, 'row': 1, 'type': 'ENGINEERING'},
-                        'deflector': {'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 3, 'deps': [('shield', 2)], 'col': 1, 'row': 2, 'type': 'ENGINEERING'},
-                        'coolant': {'max_level': 4, 'cost_func': lambda p: (p.skills['coolant'] + 1) * 60, 'scrap_cost_func': lambda p: (p.skills['coolant'] + 1) * 1, 'deps': [], 'col': 2, 'row': 1, 'type': 'ENGINEERING'},
-                        'hyperdrive': {'max_level': 1, 'cost_func': lambda p: 350, 'scrap_cost_func': lambda p: 6, 'deps': [('shield', 2), ('coolant', 2)], 'col': 2, 'row': 2, 'type': 'ENGINEERING'},
-                        'class_tier1': {'max_level': 3, 'cost_func': lambda p: (p.skills['class_tier1'] + 1) * 120, 'scrap_cost_func': lambda p: (p.skills['class_tier1'] + 1) * 2, 'deps': [], 'col': 3, 'row': 1, 'type': 'ENGINEERING'},
-                        'class_tier2': {'max_level': 2, 'cost_func': lambda p: (p.skills['class_tier2'] + 1) * 180, 'scrap_cost_func': lambda p: (p.skills['class_tier2'] + 1) * 3, 'deps': [('class_tier1', 1)], 'col': 3, 'row': 2, 'type': 'ENGINEERING'},
-                        'class_tier3': {'max_level': 1, 'cost_func': lambda p: 350, 'scrap_cost_func': lambda p: 5, 'deps': [('class_tier2', 1)], 'col': 3, 'row': 3, 'type': 'ENGINEERING'},
+                        'shield': {'name': 'Shield Gen', 'max_level': 4, 'cost_func': lambda p: (p.skills['shield'] + 1) * 75, 'scrap_cost_func': lambda p: (p.skills['shield'] + 1) * 1, 'deps': [], 'type': 'ENGINEERING', 'slot': 'SHIELD'},
+                        'deflector': {'name': 'Deflector', 'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 3, 'deps': [('shield', 2)], 'type': 'ENGINEERING', 'slot': 'SHIELD'},
+                        'emergency_recharge': {'name': 'E-Recharge', 'max_level': 2, 'cost_func': lambda p: (p.skills['emergency_recharge'] + 1) * 150, 'scrap_cost_func': lambda p: (p.skills['emergency_recharge'] + 1) * 3, 'deps': [('shield', 2)], 'type': 'ENGINEERING', 'slot': 'SHIELD'},
+                        
+                        'coolant': {'name': 'Coolant', 'max_level': 4, 'cost_func': lambda p: (p.skills['coolant'] + 1) * 60, 'scrap_cost_func': lambda p: (p.skills['coolant'] + 1) * 1, 'deps': [], 'type': 'ENGINEERING', 'slot': 'CORE'},
+                        'nanite_repair': {'name': 'Nanite Rep', 'max_level': 3, 'cost_func': lambda p: (p.skills['nanite_repair'] + 1) * 120, 'scrap_cost_func': lambda p: (p.skills['nanite_repair'] + 1) * 2, 'deps': [('coolant', 1)], 'type': 'ENGINEERING', 'slot': 'CORE'},
+                        'class_tier1': {'name': 'Class I', 'max_level': 3, 'cost_func': lambda p: (p.skills['class_tier1'] + 1) * 120, 'scrap_cost_func': lambda p: (p.skills['class_tier1'] + 1) * 2, 'deps': [], 'type': 'ENGINEERING', 'slot': 'CORE'},
+                        'class_tier2': {'name': 'Class II', 'max_level': 2, 'cost_func': lambda p: (p.skills['class_tier2'] + 1) * 180, 'scrap_cost_func': lambda p: (p.skills['class_tier2'] + 1) * 3, 'deps': [('class_tier1', 1)], 'type': 'ENGINEERING', 'slot': 'CORE'},
+                        'class_tier3': {'name': 'Class III', 'max_level': 1, 'cost_func': lambda p: 350, 'scrap_cost_func': lambda p: 5, 'deps': [('class_tier2', 1)], 'type': 'ENGINEERING', 'slot': 'CORE'},
+                        
+                        'hyperdrive': {'name': 'Hyperdrive', 'max_level': 1, 'cost_func': lambda p: 350, 'scrap_cost_func': lambda p: 6, 'deps': [('shield', 2), ('coolant', 2)], 'type': 'ENGINEERING', 'slot': 'ENGINE'},
+                        'afterburner': {'name': 'Afterburner', 'max_level': 3, 'cost_func': lambda p: (p.skills['afterburner'] + 1) * 100, 'scrap_cost_func': lambda p: (p.skills['afterburner'] + 1) * 2, 'deps': [], 'type': 'ENGINEERING', 'slot': 'ENGINE'},
+                        'vector_nozzle': {'name': 'Vector Noz', 'max_level': 3, 'cost_func': lambda p: (p.skills['vector_nozzle'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['vector_nozzle'] + 1) * 2, 'deps': [], 'type': 'ENGINEERING', 'slot': 'ENGINE'},
 
-                        'weapon': {'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 4, 'deps': [], 'col': 1, 'row': 1, 'type': 'WEAPONRY'},
-                        'overcharge': {'max_level': 1, 'cost_func': lambda p: 250, 'scrap_cost_func': lambda p: 4, 'deps': [('weapon', 1)], 'col': 1, 'row': 2, 'type': 'WEAPONRY'},
-                        'shotgun_unlocked': {'max_level': 1, 'cost_func': lambda p: 300, 'scrap_cost_func': lambda p: 5, 'deps': [], 'col': 1, 'row': 3, 'type': 'WEAPONRY'},
-                        'shotgun_mod': {'max_level': 3, 'cost_func': lambda p: (p.skills['shotgun_mod'] + 1) * 100, 'scrap_cost_func': lambda p: (p.skills['shotgun_mod'] + 1) * 2, 'deps': [('shotgun_unlocked', 1)], 'col': 1, 'row': 4, 'type': 'WEAPONRY'},
-                        'railgun_unlocked': {'max_level': 1, 'cost_func': lambda p: 500, 'scrap_cost_func': lambda p: 10, 'deps': [], 'col': 2, 'row': 1, 'type': 'WEAPONRY'},
-                        'railgun_mod': {'max_level': 3, 'cost_func': lambda p: (p.skills['railgun_mod'] + 1) * 150, 'scrap_cost_func': lambda p: (p.skills['railgun_mod'] + 1) * 4, 'deps': [('railgun_unlocked', 1)], 'col': 2, 'row': 2, 'type': 'WEAPONRY'},
-                        'torpedo': {'max_level': 4, 'cost_func': lambda p: (p.skills['torpedo'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['torpedo'] + 1) * 1, 'deps': [], 'col': 2, 'row': 3, 'type': 'WEAPONRY'},
-                        'cluster_torpedo': {'max_level': 1, 'cost_func': lambda p: 300, 'scrap_cost_func': lambda p: 5, 'deps': [('torpedo', 2)], 'col': 2, 'row': 4, 'type': 'WEAPONRY'},
-                        'bomb_unlocked': {'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 3, 'deps': [], 'col': 3, 'row': 1, 'type': 'WEAPONRY'},
-                        'bomb_cap': {'max_level': 3, 'cost_func': lambda p: (p.skills['bomb_cap'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['bomb_cap'] + 1) * 2, 'deps': [('bomb_unlocked', 1)], 'col': 3, 'row': 2, 'type': 'WEAPONRY'},
-                        'missile_unlocked': {'max_level': 1, 'cost_func': lambda p: 400, 'scrap_cost_func': lambda p: 7, 'deps': [], 'col': 3, 'row': 3, 'type': 'WEAPONRY'},
-                        'missile_cap': {'max_level': 3, 'cost_func': lambda p: (p.skills['missile_cap'] + 1) * 120, 'scrap_cost_func': lambda p: (p.skills['missile_cap'] + 1) * 3, 'deps': [('missile_unlocked', 1)], 'col': 3, 'row': 4, 'type': 'WEAPONRY'}
+                        'weapon': {'name': 'Multi-Cannon', 'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 4, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'overcharge': {'name': 'Overcharger', 'max_level': 1, 'cost_func': lambda p: 250, 'scrap_cost_func': lambda p: 4, 'deps': [('weapon', 1)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'shotgun_unlocked': {'name': 'Buy Shotgun', 'max_level': 1, 'cost_func': lambda p: 300, 'scrap_cost_func': lambda p: 5, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'shotgun_mod': {'name': 'Shotgun Tune', 'max_level': 3, 'cost_func': lambda p: (p.skills['shotgun_mod'] + 1) * 100, 'scrap_cost_func': lambda p: (p.skills['shotgun_mod'] + 1) * 2, 'deps': [('shotgun_unlocked', 1)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'railgun_unlocked': {'name': 'Buy Railgun', 'max_level': 1, 'cost_func': lambda p: 500, 'scrap_cost_func': lambda p: 10, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'railgun_mod': {'name': 'Railgun Tune', 'max_level': 3, 'cost_func': lambda p: (p.skills['railgun_mod'] + 1) * 150, 'scrap_cost_func': lambda p: (p.skills['railgun_mod'] + 1) * 4, 'deps': [('railgun_unlocked', 1)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'torpedo': {'name': 'Torpedo Sys', 'max_level': 4, 'cost_func': lambda p: (p.skills['torpedo'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['torpedo'] + 1) * 1, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'cluster_torpedo': {'name': 'Cluster War', 'max_level': 1, 'cost_func': lambda p: 300, 'scrap_cost_func': lambda p: 5, 'deps': [('torpedo', 2)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'bomb_unlocked': {'name': 'Buy Bomb', 'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 3, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'bomb_cap': {'name': 'Bomb Payload', 'max_level': 3, 'cost_func': lambda p: (p.skills['bomb_cap'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['bomb_cap'] + 1) * 2, 'deps': [('bomb_unlocked', 1)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'missile_unlocked': {'name': 'Buy Missile', 'max_level': 1, 'cost_func': lambda p: 400, 'scrap_cost_func': lambda p: 7, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'missile_cap': {'name': 'Missile Pay', 'max_level': 3, 'cost_func': lambda p: (p.skills['missile_cap'] + 1) * 120, 'scrap_cost_func': lambda p: (p.skills['missile_cap'] + 1) * 3, 'deps': [('missile_unlocked', 1)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                        'ammo_loader': {'name': 'Ammo Loader', 'max_level': 3, 'cost_func': lambda p: (p.skills['ammo_loader'] + 1) * 100, 'scrap_cost_func': lambda p: (p.skills['ammo_loader'] + 1) * 2, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'}
                     }
                     
-                    for key, node in nodes_data.items():
-                        if node['type'] != self.hub_station_active:
+                    # 1. Grab from shelf
+                    active_nodes = [k for k, n in nodes_data.items() if n['type'] == self.hub_station_active]
+                    grabbed = False
+                    
+                    CARD_W, CARD_H = 140, 78
+                    COLS = 4
+                    CARD_PAD_X, CARD_PAD_Y = 6, 6
+                    shelf_origin_x = 5 + 8  # shelf_panel.x + 8
+                    shelf_origin_y = 175 + 30  # shelf_panel.y + 30
+                    
+                    for idx, key in enumerate(active_nodes):
+                        part_meta = all_parts.get(key)
+                        if not part_meta:
                             continue
-                        node_x = 630 + (node['col'] - 1) * 180
-                        node_y = 210 + (node['row'] - 1) * 90
-                        rect = pygame.Rect(node_x, node_y, 160, 75)
-                        
+                        col = part_meta['col']
+                        row = part_meta['row']
+                        node_x = shelf_origin_x + col * (CARD_W + CARD_PAD_X)
+                        node_y = shelf_origin_y + row * (CARD_H + CARD_PAD_Y)
+                        rect = pygame.Rect(node_x, node_y, CARD_W, CARD_H)
                         if rect.collidepoint(vmx, vmy):
+                            node = nodes_data[key]
                             unlocked = True
                             for dep_key, req_lvl in node['deps']:
                                 if self.player.skills[dep_key] < req_lvl:
                                     unlocked = False
+                            if unlocked and (self.player.skills[key] < node['max_level'] or self.player.skills[key] > 0):
+                                self.dragged_part_key = key
+                                self.dragged_origin = 'SHELF'
+                                self.drag_start_x = node_x + CARD_W // 2
+                                self.drag_start_y = node_y + CARD_H // 2
+                                self.drag_mouse_offset = (vmx - (node_x + CARD_W // 2), vmy - (node_y + CARD_H // 2))
+                                if SOUNDS: SOUNDS.play('collect')
+                                grabbed = True
+                                break
+                                
+                    # 2. Grab from active ship blueprint slots
+                    if not grabbed:
+                        slot_coords = {
+                            'ENGINE': (1000, 310),
+                            'SHIELD': (870, 480),
+                            'CORE': (1000, 480),
+                            'PRIMARY': (1130, 410),
+                            'SECONDARY': (1130, 550)
+                        }
+                        for slot_name, (cx, cy) in slot_coords.items():
+                            dist = math.sqrt((vmx - cx)**2 + (vmy - cy)**2)
+                            if dist < 35:
+                                if slot_name == 'SHIELD':
+                                    chosen_key = self.player.equipped_shield
+                                elif slot_name == 'CORE':
+                                    chosen_key = self.player.equipped_core
+                                elif slot_name == 'ENGINE':
+                                    chosen_key = self.player.equipped_engine
+                                elif slot_name == 'PRIMARY':
+                                    eq_map = {0: 'weapon', 1: 'shotgun_unlocked', 2: 'railgun_unlocked'}
+                                    chosen_key = eq_map.get(self.player.active_primary)
+                                elif slot_name == 'SECONDARY':
+                                    eq_map = {0: 'torpedo', 1: 'bomb_unlocked', 2: 'missile_unlocked'}
+                                    chosen_key = eq_map.get(self.player.active_secondary)
+                                else:
+                                    chosen_key = None
+                                    
+                                if chosen_key and self.player.skills.get(chosen_key, 0) > 0:
+                                    self.dragged_part_key = chosen_key
+                                    self.dragged_origin = 'SHIP_SLOT'
+                                    self.drag_start_x = cx
+                                    self.drag_start_y = cy
+                                    self.drag_mouse_offset = (vmx - cx, vmy - cy)
+                                    if SOUNDS: SOUNDS.play('collect')
+                                    grabbed = True
                                     break
                                     
-                            if unlocked:
-                                current_level = self.player.skills[key]
-                                max_level = node['max_level']
-                                cost = node['cost_func'](self.player)
-                                scrap_cost = node['scrap_cost_func'](self.player)
-                                if current_level < max_level and self.player.credits >= cost and self.player.scraps >= scrap_cost:
-                                    self.player.credits -= cost
-                                    self.player.scraps -= scrap_cost
-                                    self.player.skills[key] += 1
-                                    if key == 'shield':
-                                        self.player.max_shields = 3 + self.player.skills['shield']
-                                        self.player.shields = self.player.max_shields
-                                    # Re-apply class stats to calculate new upgrades dynamically
-                                    self.player.set_class(self.player.class_name)
+                    # 3. Grab from owned inventory (WEAPONS or ENGINEERING parts)
+                    if not grabbed:
+                        owned_items = []
+                        drag_origin_type = 'OWNED_WEAPONS'
+                        if self.hub_station_active == 'WEAPONRY':
+                            weapon_keys = ['weapon', 'shotgun_unlocked', 'railgun_unlocked', 'torpedo', 'bomb_unlocked', 'missile_unlocked']
+                            equipped_keys = []
+                            eq_p = {0: 'weapon', 1: 'shotgun_unlocked', 2: 'railgun_unlocked'}.get(self.player.active_primary)
+                            if eq_p and self.player.skills.get(eq_p, 0) > 0:
+                                equipped_keys.append(eq_p)
+                            eq_s = {0: 'torpedo', 1: 'bomb_unlocked', 2: 'missile_unlocked'}.get(self.player.active_secondary)
+                            if eq_s and self.player.skills.get(eq_s, 0) > 0:
+                                equipped_keys.append(eq_s)
+                            owned_items = [k for k in weapon_keys if self.player.skills.get(k, 0) > 0 and k not in equipped_keys]
+                            drag_origin_type = 'OWNED_WEAPONS'
+                        elif self.hub_station_active == 'ENGINEERING':
+                            item_keys = ['shield', 'deflector', 'emergency_recharge', 'coolant', 'nanite_repair', 'class_tier1', 'class_tier2', 'class_tier3', 'afterburner', 'vector_nozzle', 'hyperdrive']
+                            equipped_keys = [self.player.equipped_shield, self.player.equipped_core, self.player.equipped_engine]
+                            owned_items = [k for k in item_keys if self.player.skills.get(k, 0) > 0 and k not in equipped_keys]
+                            drag_origin_type = 'OWNED_ITEMS'
+                            
+                        if owned_items:
+                            sep_y = 650
+                            if self.hub_station_active == 'WEAPONRY':
+                                inv_origin_x = 640
+                                cols_num = 3
+                            else:
+                                inv_origin_x = 820
+                                cols_num = 2
+                            inv_origin_y = 710
+                            INV_CARD_W, INV_CARD_H = 170, 70
+                            INV_PAD_X, INV_PAD_Y = 10, 10
+                            for idx, key in enumerate(owned_items):
+                                col = idx % cols_num
+                                row = idx // cols_num
+                                cx = inv_origin_x + col * (INV_CARD_W + INV_PAD_X)
+                                cy = inv_origin_y + row * (INV_CARD_H + INV_PAD_Y)
+                                rect = pygame.Rect(cx, cy, INV_CARD_W, INV_CARD_H)
+                                if rect.collidepoint(vmx, vmy):
+                                    self.dragged_part_key = key
+                                    self.dragged_origin = drag_origin_type
+                                    self.drag_start_x = cx + INV_CARD_W // 2
+                                    self.drag_start_y = cy + INV_CARD_H // 2
+                                    self.drag_mouse_offset = (vmx - (cx + INV_CARD_W // 2), vmy - (cy + INV_CARD_H // 2))
+                                    if SOUNDS: SOUNDS.play('collect')
+                                    grabbed = True
+                                    break
                 
                 if self.state == 'PAUSED' and self.current_zone == 'HUB' and self.hub_station_active == 'SUPPLY':
                     items = [
@@ -3843,59 +4821,316 @@ class Game:
                         rect = pygame.Rect(650, 210 + i * 80, 480, 68)
                         if rect.collidepoint(vmx, vmy):
                             if self.player.credits >= cost:
+                                success = False
                                 if i == 0: # Shield Repair
                                     if self.player.shields < self.player.max_shields:
                                         self.player.credits -= cost
                                         self.player.shields = min(self.player.max_shields, self.player.shields + 1)
+                                        success = True
                                 elif i == 1: # Torpedo Refill
                                     if self.player.torpedo_ammo < self.player.max_torpedo_ammo:
                                         self.player.credits -= cost
                                         self.player.torpedo_ammo = self.player.max_torpedo_ammo
+                                        success = True
                                 elif i == 2: # Bomb Refill
                                     if self.player.bomb_ammo < self.player.max_bomb_ammo:
                                         self.player.credits -= cost
                                         self.player.bomb_ammo = self.player.max_bomb_ammo
+                                        success = True
                                 elif i == 3: # Missile Refill
                                     if self.player.missile_ammo < self.player.max_missile_ammo:
                                         self.player.credits -= cost
                                         self.player.missile_ammo = self.player.max_missile_ammo
+                                        success = True
                                 elif i == 4: # Flare Refill
                                     if self.player.flare_ammo < self.player.max_flare_ammo:
                                         self.player.credits -= cost
                                         self.player.flare_ammo = self.player.max_flare_ammo
+                                        success = True
                                 elif i == 5: # Mod Piercing
                                     if not self.player.has_mod_piercing:
                                         self.player.credits -= cost
                                         self.player.has_mod_piercing = True
+                                        success = True
                                 elif i == 6: # Mod Split Shot
                                     if not self.player.has_mod_split:
                                         self.player.credits -= cost
                                         self.player.has_mod_split = True
+                                        success = True
                                 elif i == 7: # Mod Siphon
                                     if not self.player.has_mod_siphon:
                                         self.player.credits -= cost
                                         self.player.has_mod_siphon = True
+                                        success = True
+                                        
+                                if success:
+                                    if SOUNDS: SOUNDS.play('collect')
+                                    for _ in range(15):
+                                        self.particles.append(Particle(rect.centerx, rect.centery, GREEN))
+                                        
+                # Tutorial level guide card clicks
+                if self.current_zone == 'TUTORIAL' and self.state == 'PLAYING':
+                    panel_rect = pygame.Rect(VIRTUAL_WIDTH // 2 - 350, VIRTUAL_HEIGHT - 170, 700, 140)
+                    action_rect = pygame.Rect(panel_rect.x + 575, panel_rect.y + 100, 110, 30)
+                    if action_rect.collidepoint(vmx, vmy):
+                        if SOUNDS: SOUNDS.play('select')
+                        if self.tutorial_stage < len(self.tutorial_dialogues) - 1:
+                            self.tutorial_stage += 1
+                        else:
+                            # Finished tutorial! Return to Hub
+                            self.state = 'HUB'
+                            self.current_zone = 'HUB'
+                            self.player.x = VIRTUAL_WIDTH // 2 - self.player.width // 2
+                            self.player.y = 350
+                            self.reset_game() # Clean tutorial entities
+                    
+                    if self.tutorial_stage > 0:
+                        prev_rect = pygame.Rect(panel_rect.x + 460, panel_rect.y + 100, 100, 30)
+                        if prev_rect.collidepoint(vmx, vmy):
+                            if SOUNDS: SOUNDS.play('select')
+                            self.tutorial_stage -= 1
+
+            if event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+                self.dragging_volume = False
+                self.dragging_tint = False
+                self.dragging_vignette = False
+                self.dragging_softness = False
+                if self.state == 'PAUSED' and self.current_zone == 'HUB' and self.hub_station_active in ('ENGINEERING', 'WEAPONRY'):
+                    if self.dragged_part_key is not None:
+                        all_parts = self.get_all_parts()
+                        nodes_data = {
+                            'shield': {'name': 'Shield Gen', 'max_level': 4, 'cost_func': lambda p: (p.skills['shield'] + 1) * 75, 'scrap_cost_func': lambda p: (p.skills['shield'] + 1) * 1, 'deps': [], 'type': 'ENGINEERING', 'slot': 'SHIELD'},
+                            'deflector': {'name': 'Deflector', 'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 3, 'deps': [('shield', 2)], 'type': 'ENGINEERING', 'slot': 'SHIELD'},
+                            'emergency_recharge': {'name': 'E-Recharge', 'max_level': 2, 'cost_func': lambda p: (p.skills['emergency_recharge'] + 1) * 150, 'scrap_cost_func': lambda p: (p.skills['emergency_recharge'] + 1) * 3, 'deps': [('shield', 2)], 'type': 'ENGINEERING', 'slot': 'SHIELD'},
+                            'coolant': {'name': 'Coolant', 'max_level': 4, 'cost_func': lambda p: (p.skills['coolant'] + 1) * 60, 'scrap_cost_func': lambda p: (p.skills['coolant'] + 1) * 1, 'deps': [], 'type': 'ENGINEERING', 'slot': 'CORE'},
+                            'nanite_repair': {'name': 'Nanite Rep', 'max_level': 3, 'cost_func': lambda p: (p.skills['nanite_repair'] + 1) * 120, 'scrap_cost_func': lambda p: (p.skills['nanite_repair'] + 1) * 2, 'deps': [('coolant', 1)], 'type': 'ENGINEERING', 'slot': 'CORE'},
+                            'class_tier1': {'name': 'Class I', 'max_level': 3, 'cost_func': lambda p: (p.skills['class_tier1'] + 1) * 120, 'scrap_cost_func': lambda p: (p.skills['class_tier1'] + 1) * 2, 'deps': [], 'type': 'ENGINEERING', 'slot': 'CORE'},
+                            'class_tier2': {'name': 'Class II', 'max_level': 2, 'cost_func': lambda p: (p.skills['class_tier2'] + 1) * 180, 'scrap_cost_func': lambda p: (p.skills['class_tier2'] + 1) * 3, 'deps': [('class_tier1', 1)], 'type': 'ENGINEERING', 'slot': 'CORE'},
+                            'class_tier3': {'name': 'Class III', 'max_level': 1, 'cost_func': lambda p: 350, 'scrap_cost_func': lambda p: 5, 'deps': [('class_tier2', 1)], 'type': 'ENGINEERING', 'slot': 'CORE'},
+                            'hyperdrive': {'name': 'Hyperdrive', 'max_level': 1, 'cost_func': lambda p: 350, 'scrap_cost_func': lambda p: 6, 'deps': [('shield', 2), ('coolant', 2)], 'type': 'ENGINEERING', 'slot': 'ENGINE'},
+                            'afterburner': {'name': 'Afterburner', 'max_level': 3, 'cost_func': lambda p: (p.skills['afterburner'] + 1) * 100, 'scrap_cost_func': lambda p: (p.skills['afterburner'] + 1) * 2, 'deps': [], 'type': 'ENGINEERING', 'slot': 'ENGINE'},
+                            'vector_nozzle': {'name': 'Vector Noz', 'max_level': 3, 'cost_func': lambda p: (p.skills['vector_nozzle'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['vector_nozzle'] + 1) * 2, 'deps': [], 'type': 'ENGINEERING', 'slot': 'ENGINE'},
+                            'weapon': {'name': 'Multi-Cannon', 'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 4, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'overcharge': {'name': 'Overcharger', 'max_level': 1, 'cost_func': lambda p: 250, 'scrap_cost_func': lambda p: 4, 'deps': [('weapon', 1)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'shotgun_unlocked': {'name': 'Buy Shotgun', 'max_level': 1, 'cost_func': lambda p: 300, 'scrap_cost_func': lambda p: 5, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'shotgun_mod': {'name': 'Shotgun Tune', 'max_level': 3, 'cost_func': lambda p: (p.skills['shotgun_mod'] + 1) * 100, 'scrap_cost_func': lambda p: (p.skills['shotgun_mod'] + 1) * 2, 'deps': [('shotgun_unlocked', 1)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'railgun_unlocked': {'name': 'Buy Railgun', 'max_level': 1, 'cost_func': lambda p: 500, 'scrap_cost_func': lambda p: 10, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'railgun_mod': {'name': 'Railgun Tune', 'max_level': 3, 'cost_func': lambda p: (p.skills['railgun_mod'] + 1) * 150, 'scrap_cost_func': lambda p: (p.skills['railgun_mod'] + 1) * 4, 'deps': [('railgun_unlocked', 1)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'torpedo': {'name': 'Torpedo Sys', 'max_level': 4, 'cost_func': lambda p: (p.skills['torpedo'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['torpedo'] + 1) * 1, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'cluster_torpedo': {'name': 'Cluster War', 'max_level': 1, 'cost_func': lambda p: 300, 'scrap_cost_func': lambda p: 5, 'deps': [('torpedo', 2)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'bomb_unlocked': {'name': 'Buy Bomb', 'max_level': 1, 'cost_func': lambda p: 200, 'scrap_cost_func': lambda p: 3, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'bomb_cap': {'name': 'Bomb Payload', 'max_level': 3, 'cost_func': lambda p: (p.skills['bomb_cap'] + 1) * 80, 'scrap_cost_func': lambda p: (p.skills['bomb_cap'] + 1) * 2, 'deps': [('bomb_unlocked', 1)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'missile_unlocked': {'name': 'Buy Missile', 'max_level': 1, 'cost_func': lambda p: 400, 'scrap_cost_func': lambda p: 7, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'missile_cap': {'name': 'Missile Pay', 'max_level': 3, 'cost_func': lambda p: (p.skills['missile_cap'] + 1) * 120, 'scrap_cost_func': lambda p: (p.skills['missile_cap'] + 1) * 3, 'deps': [('missile_unlocked', 1)], 'type': 'WEAPONRY', 'slot': 'WEAPON'},
+                            'ammo_loader': {'name': 'Ammo Loader', 'max_level': 3, 'cost_func': lambda p: (p.skills['ammo_loader'] + 1) * 100, 'scrap_cost_func': lambda p: (p.skills['ammo_loader'] + 1) * 2, 'deps': [], 'type': 'WEAPONRY', 'slot': 'WEAPON'}
+                        }
+                        
+                        node = nodes_data[self.dragged_part_key]
+                        mx, my = pygame.mouse.get_pos()
+                        vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
+                        vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
+                        
+                        # Click to buy checking
+                        click_dist = math.sqrt((vmx - getattr(self, 'drag_start_x', vmx))**2 + (vmy - getattr(self, 'drag_start_y', vmy))**2)
+                        
+                        # 1. Dropping from Shelf onto Ship Blueprint Slot (or click-to-buy)
+                        if self.dragged_origin == 'SHELF':
+                            target_slot = all_parts[self.dragged_part_key]['slot']
+                            slot_coords = {
+                                'ENGINE': (1000, 310),
+                                'SHIELD': (870, 480),
+                                'CORE': (1000, 480),
+                                'PRIMARY': (1130, 410),
+                                'SECONDARY': (1130, 550)
+                            }
+                            tx, ty = slot_coords[target_slot]
+                            dist = math.sqrt((vmx - tx)**2 + (vmy - ty)**2)
+                            if dist < 80 or (click_dist < 10):
+                                is_upgrade = self.player.skills[self.dragged_part_key] < node['max_level']
+                                cost = node['cost_func'](self.player)
+                                scrap_cost = node['scrap_cost_func'](self.player)
+                                can_afford = (self.player.credits >= cost and self.player.scraps >= scrap_cost)
+                                did_action = False
+                                
+                                if is_upgrade and can_afford:
+                                    self.player.credits -= cost
+                                    self.player.scraps -= scrap_cost
+                                    self.player.skills[self.dragged_part_key] += 1
+                                    did_action = True
+                                elif self.player.skills[self.dragged_part_key] > 0:
+                                    did_action = True
+                                    
+                                if did_action:
+                                    # Equip logic: set active selection to the new weapon/part
+                                    if target_slot == 'PRIMARY':
+                                        if self.dragged_part_key == 'weapon': self.player.active_primary = 0
+                                        elif self.dragged_part_key == 'shotgun_unlocked': self.player.active_primary = 1
+                                        elif self.dragged_part_key == 'railgun_unlocked': self.player.active_primary = 2
+                                    elif target_slot == 'SECONDARY':
+                                        if self.dragged_part_key == 'torpedo': self.player.active_secondary = 0
+                                        elif self.dragged_part_key == 'bomb_unlocked': self.player.active_secondary = 1
+                                        elif self.dragged_part_key == 'missile_unlocked': self.player.active_secondary = 2
+                                    elif target_slot == 'SHIELD':
+                                        self.player.equipped_shield = self.dragged_part_key
+                                    elif target_slot == 'CORE':
+                                        self.player.equipped_core = self.dragged_part_key
+                                    elif target_slot == 'ENGINE':
+                                        self.player.equipped_engine = self.dragged_part_key
+                                        
+                                    if SOUNDS: SOUNDS.play('warp')
+                                    for _ in range(25):
+                                        self.particles.append(Particle(tx, ty, CYAN))
+                                        
+                                    if self.dragged_part_key == 'shield':
+                                        self.player.max_shields = 3 + self.player.get_active_skill('shield')
+                                        self.player.shields = self.player.max_shields
+                                    self.player.set_class(self.player.class_name)
+                                    
+                        # 2. Equipping owned weapons/items from inventory onto Ship Blueprint Slots
+                        elif self.dragged_origin in ('OWNED_WEAPONS', 'OWNED_ITEMS'):
+                            slot_coords = {
+                                'PRIMARY': (1130, 410),
+                                'SECONDARY': (1130, 550),
+                                'SHIELD': (870, 480),
+                                'CORE': (1000, 480),
+                                'ENGINE': (1000, 310)
+                            }
+                            equipped = False
+                            for slot_name, (cx, cy) in slot_coords.items():
+                                dist = math.sqrt((vmx - cx)**2 + (vmy - cy)**2)
+                                if dist < 80:
+                                    target_slot = all_parts[self.dragged_part_key]['slot']
+                                    if target_slot == slot_name:
+                                        if target_slot == 'PRIMARY':
+                                            val_map = {'weapon': 0, 'shotgun_unlocked': 1, 'railgun_unlocked': 2}
+                                            self.player.active_primary = val_map[self.dragged_part_key]
+                                        elif target_slot == 'SECONDARY':
+                                            val_map = {'torpedo': 0, 'bomb_unlocked': 1, 'missile_unlocked': 2}
+                                            self.player.active_secondary = val_map[self.dragged_part_key]
+                                        elif target_slot == 'SHIELD':
+                                            self.player.equipped_shield = self.dragged_part_key
+                                        elif target_slot == 'CORE':
+                                            self.player.equipped_core = self.dragged_part_key
+                                        elif target_slot == 'ENGINE':
+                                            self.player.equipped_engine = self.dragged_part_key
+                                        if SOUNDS: SOUNDS.play('warp')
+                                        for _ in range(25):
+                                            self.particles.append(Particle(cx, cy, CYAN))
+                                        equipped = True
+                                        break
+                            
+                            # If not equipped onto slot, check if dropped into Recycling Bin
+                            if not equipped:
+                                bin_rect = pygame.Rect(640, 580, 150, 70)
+                                if bin_rect.collidepoint(vmx, vmy):
+                                    if self.player.skills[self.dragged_part_key] > 0:
+                                        weapon_mods = {
+                                            'weapon': 'overcharge',
+                                            'shotgun_unlocked': 'shotgun_mod',
+                                            'railgun_unlocked': 'railgun_mod',
+                                            'torpedo': 'cluster_torpedo',
+                                            'bomb_unlocked': 'bomb_cap',
+                                            'missile_unlocked': 'missile_cap'
+                                        }
+                                        refund_scraps = 0
+                                        refund_scraps += node['scrap_cost_func'](self.player)
+                                        self.player.skills[self.dragged_part_key] = 0
+                                        
+                                        mod_key = weapon_mods.get(self.dragged_part_key)
+                                        if mod_key and self.player.skills.get(mod_key, 0) > 0:
+                                            mod_node = nodes_data.get(mod_key)
+                                            if mod_node:
+                                                refund_scraps += mod_node['scrap_cost_func'](self.player)
+                                            self.player.skills[mod_key] = 0
+                                            
+                                        self.player.scraps += max(1, refund_scraps)
+                                        if SOUNDS: SOUNDS.play('explosion')
+                                        for _ in range(20):
+                                            self.particles.append(Particle(vmx, vmy, GOLD))
+                                        self.player.set_class(self.player.class_name)
+
+                        # 3. Dropping from Ship Slot into Recycling Bin
+                        elif self.dragged_origin == 'SHIP_SLOT':
+                            bin_rect = pygame.Rect(640, 580, 150, 70)
+                            if bin_rect.collidepoint(vmx, vmy):
+                                if self.player.skills[self.dragged_part_key] > 0:
+                                    weapon_mods = {
+                                        'weapon': 'overcharge',
+                                        'shotgun_unlocked': 'shotgun_mod',
+                                        'railgun_unlocked': 'railgun_mod',
+                                        'torpedo': 'cluster_torpedo',
+                                        'bomb_unlocked': 'bomb_cap',
+                                        'missile_unlocked': 'missile_cap'
+                                    }
+                                    refund_scraps = 0
+                                    refund_scraps += node['scrap_cost_func'](self.player)
+                                    self.player.skills[self.dragged_part_key] = 0
+                                    
+                                    if self.dragged_part_key == self.player.equipped_shield:
+                                        self.player.equipped_shield = None
+                                    elif self.dragged_part_key == self.player.equipped_core:
+                                        self.player.equipped_core = None
+                                    elif self.dragged_part_key == self.player.equipped_engine:
+                                        self.player.equipped_engine = None
+                                        
+                                    mod_key = weapon_mods.get(self.dragged_part_key)
+                                    if mod_key and self.player.skills.get(mod_key, 0) > 0:
+                                        mod_node = nodes_data.get(mod_key)
+                                        if mod_node:
+                                            refund_scraps += mod_node['scrap_cost_func'](self.player)
+                                        self.player.skills[mod_key] = 0
+                                        
+                                    self.player.scraps += max(1, refund_scraps)
+                                    if SOUNDS: SOUNDS.play('explosion')
+                                    for _ in range(20):
+                                        self.particles.append(Particle(vmx, vmy, GOLD))
+                                        
+                                    if self.dragged_part_key == 'shield':
+                                        self.player.max_shields = 3 + self.player.get_active_skill('shield')
+                                        self.player.shields = min(self.player.shields, self.player.max_shields)
+                                    self.player.set_class(self.player.class_name)
+                                    
+                        self.dragged_part_key = None
 
             if event.type == pygame.KEYDOWN:
-                if event.key == pygame.K_t:
+                if self.state == 'INTRO':
+                    if not self.transition_state:
+                        self.transition_state = 'INTRO_TO_MAIN_MENU'
+                        self.transition_start_time = pygame.time.get_ticks()
+                    return
+                if event.key == pygame.K_F3:
+                    self.dev_mode = not self.dev_mode
+                    if self.dev_mode:
+                        self.player.credits += 10000
+                        self.player.scraps += 100
+                        self.debug_invincible = True
+                
+                if event.key == pygame.K_t and getattr(self, 'dev_mode', False):
                     self.debug_invincible = not self.debug_invincible
                     if self.debug_invincible:
                         self.player.credits += 1000000
                         self.player.scraps += 10000
 
-                if event.key == pygame.K_v:
+                if event.key == pygame.K_v and getattr(self, 'dev_mode', False):
                     self.victory_start_time = pygame.time.get_ticks()
                     self.escape_sequence_active = False
                     self.boss_defeated = False
                     self.wormhole_spawned = False
                     self.state = 'VICTORY'
 
-                if event.key == pygame.K_b and self.state == 'PLAYING' and self.current_zone != 'HUB':
+                if event.key == pygame.K_b and self.state == 'PLAYING' and self.current_zone != 'HUB' and getattr(self, 'dev_mode', False):
                     self.materials_collected = 5
-                    self.boss = Boss(self.current_zone, self.player.y - 450)
-                    self.enemies = []
-                    self.meteors = []
-                    self.enemy_bullets = []
+                    cfg = BIOME_CONFIGS.get(self.current_zone, {'boss_count': 0})
+                    if cfg.get('boss_count', 0) > 0:
+                        self.boss = Boss(self.current_zone, self.player.y - 450)
+                        self.enemies = []
+                        self.meteors = []
+                        self.enemy_bullets = []
+                    else:
+                        self.wormhole_pos = pygame.math.Vector2(self.player.x, self.player.y - 450)
+                        self.wormhole_spawned = True
+                        self.boss_defeated = True
+                        self.boss_defeated_time = pygame.time.get_ticks()
 
                 if self.state == 'MAIN_MENU':
                     if self.input_active:
@@ -4016,15 +5251,29 @@ class Game:
             if self.state in ('PLAYING', 'PAUSED'):
                 if (getattr(self, 'boss', None) and not self.boss.is_dead) or (self.player.shields <= self.player.max_shields * 0.3):
                     wants_boss_music = True
+            elif self.state == 'VICTORY':
+                if SOUNDS.chan_ambient: SOUNDS.chan_ambient.set_volume(0.0)
+                if SOUNDS.chan_boss: SOUNDS.chan_boss.set_volume(0.0)
+                if not getattr(self, '_played_victory_music', False):
+                    SOUNDS.play('victory')
+                    self._played_victory_music = True
             SOUNDS.update_music(wants_boss_music)
         
         # Intro sequence processing
-        if self.state == 'INTRO':
-            intro_time = current_time - getattr(self, 'intro_start_time', 0)
-            if intro_time > 5500:
-                self.state = 'MAIN_MENU'
-                self.input_active = True
-            return  # Skip updating game objects during intro
+        if self.state == 'INTRO' or self.transition_state == 'INTRO_TO_MAIN_MENU':
+            if self.state == 'INTRO':
+                intro_time = current_time - getattr(self, 'intro_start_time', 0)
+                if intro_time > 5500 and not self.transition_state:
+                    self.transition_state = 'INTRO_TO_MAIN_MENU'
+                    self.transition_start_time = current_time
+            
+            if self.transition_state == 'INTRO_TO_MAIN_MENU':
+                elapsed = current_time - self.transition_start_time
+                if elapsed >= self.transition_duration:
+                    self.state = 'MAIN_MENU'
+                    self.transition_state = None
+                    self.input_active = True
+            return  # Skip updating game objects during intro/transition
             
         # Player Death sequence processing
         if getattr(self, 'player_death_timer', 0) > 0:
@@ -4064,7 +5313,10 @@ class Game:
 
         # Spawn Engine Particles
         keys = pygame.key.get_pressed()
+        has_movement_input = keys[pygame.K_UP] or keys[pygame.K_w] or keys[pygame.K_DOWN] or keys[pygame.K_s] or keys[pygame.K_LEFT] or keys[pygame.K_a] or keys[pygame.K_RIGHT] or keys[pygame.K_d]
         if (keys[pygame.K_UP] or keys[pygame.K_w] or self.player.velocity.length() > 0.5) and not self.player.is_dead and self.state in ('PLAYING', 'HUB'):
+            if has_movement_input and pygame.time.get_ticks() % 220 < 15:
+                if SOUNDS: SOUNDS.play('engine')
             rad = math.radians(self.player.angle)
             dir_f = pygame.math.Vector2(math.cos(rad), math.sin(rad))
             rear_center = pygame.math.Vector2(self.player.x + self.player.width // 2, self.player.y + self.player.height // 2) - dir_f * (self.player.height // 2)
@@ -4130,20 +5382,21 @@ class Game:
             elif player_vec.distance_to(pygame.math.Vector2(900, 450)) < 150:
                 self.hub_station_active = 'SUPPLY'
 
-            # Check Cheat Portals collisions
-            cheat_zones = ['ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'VOID', 'QUANTUM', 'SINGULARITY', 'ORION']
-            for i, zone in enumerate(cheat_zones):
-                cx = 100 + i * 125
-                cy = 130
-                cheat_portal_pos = pygame.math.Vector2(cx, cy)
-                if player_vec.distance_to(cheat_portal_pos) < 25:
-                    self.unlocked_zones[zone] = True
-                    self.current_hub_index = BIOME_CONFIGS[zone]['hub']
-                    self.setup_exploration_zone(zone)
-                    self.wormhole_charge_timer = 0
-                    self.active_hub_portal = None
-                    return
-                
+            # Check Cheat Portals collisions (if dev mode enabled)
+            if getattr(self, 'dev_mode', False):
+                cheat_zones = ['ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'VOID', 'QUANTUM', 'SINGULARITY', 'ORION']
+                for i, zone in enumerate(cheat_zones):
+                    cx = 100 + i * 125
+                    cy = 130
+                    cheat_portal_pos = pygame.math.Vector2(cx, cy)
+                    if player_vec.distance_to(cheat_portal_pos) < 25:
+                        self.unlocked_zones[zone] = True
+                        self.current_hub_index = BIOME_CONFIGS[zone]['hub']
+                        self.setup_exploration_zone(zone)
+                        self.wormhole_charge_timer = 0
+                        self.active_hub_portal = None
+                        return
+                    
             # Warp Gates with Stay Timer based on active hub index
             active_portal = None
             portal_pos_vec = None
@@ -4154,6 +5407,8 @@ class Game:
                         portal_pos = pygame.math.Vector2(600, 780)
                     elif order == 1:
                         portal_pos = pygame.math.Vector2(1000, 220)
+                    elif order == 3:
+                        portal_pos = pygame.math.Vector2(450, 630)
                     else:
                         portal_pos = pygame.math.Vector2(200, 220)
                         
@@ -4226,6 +5481,131 @@ class Game:
             self.screen_shake = max(self.screen_shake, int((speed_ratio - 0.85) * 12))
             self.screen_shake = max(self.screen_shake, int((speed_ratio - 0.85) * 6))
 
+        # Update Convoy in Level 2
+        if self.current_zone == 'VULCAN' and self.convoy:
+            self.convoy.update()
+            
+            # Decrement defend timer
+            dt = self.clock.get_time()
+            self.convoy_defend_timer = max(0.0, self.convoy_defend_timer - dt / 1000.0)
+            
+            for enemy in self.enemies:
+                e_pos = pygame.math.Vector2(enemy.rect.center)
+                c_pos = pygame.math.Vector2(self.convoy.rect.center)
+                if e_pos.distance_to(c_pos) < 300:
+                    enemy.angle = math.degrees(math.atan2(c_pos.y - e_pos.y, c_pos.x - e_pos.x))
+            
+            for eb in self.enemy_bullets[:]:
+                if self.convoy.rect.colliderect(eb.rect):
+                    self.convoy.health -= 2.0
+                    self.spawn_explosion(eb.x, eb.y, [(255, 100, 0), (255, 255, 255)], 8)
+                    if eb in self.enemy_bullets:
+                        self.enemy_bullets.remove(eb)
+            
+            if self.convoy.health <= 0:
+                self.spawn_explosion(self.convoy.x, self.convoy.y, [(255, 0, 0), (255, 100, 0), (255, 255, 255)], 50)
+                self.convoy = None
+                self.player.is_dead = True
+                self.player_death_timer = 90
+            elif self.convoy_defend_timer <= 0:
+                if not self.wormhole_spawned:
+                    self.wormhole_pos = pygame.math.Vector2(self.convoy.x, self.convoy.y - 150)
+                    self.wormhole_spawned = True
+                    self.boss_defeated = True
+                    self.boss_defeated_time = current_time
+
+        # Update Supernova in Level 4
+        if self.current_zone == 'NEBULA' and self.supernova_y is not None:
+            self.supernova_y -= self.supernova_speed
+            if self.player.y >= self.supernova_y:
+                self._damage_player(current_time, damage=0.45)
+                self.screen_shake = max(self.screen_shake, 5)
+                if random.random() < 0.1:
+                    self.spawn_explosion(self.player.x + 20, self.player.y + 20, [(255, 69, 0), (255, 255, 0)], 10)
+            
+            if self.player.y <= -6000 and not self.wormhole_spawned:
+                self.wormhole_pos = pygame.math.Vector2(self.player.x, self.player.y - 450)
+                self.wormhole_spawned = True
+                self.boss_defeated = True
+                self.boss_defeated_time = current_time
+
+        # Update and collect Energy Cells in Level 5
+        if self.current_zone == 'PLASMA':
+            for cell in self.energy_cells[:]:
+                cell.update()
+                if not self.player.is_dead and self.player.rect.colliderect(cell.rect):
+                    if SOUNDS: SOUNDS.play('collect')
+                    self.energy_cells.remove(cell)
+                    self.energy_cells_collected += 1
+                    self.spawn_explosion(cell.x, cell.y, [(255, 215, 0), (255, 255, 255)], 20)
+                    self.player.add_credits(50)
+                    self.player.award_xp(25)
+            
+            if self.energy_cells_collected >= 5 and not self.wormhole_spawned:
+                self.wormhole_pos = pygame.math.Vector2(self.player.x, self.player.y - 450)
+                self.wormhole_spawned = True
+                self.boss_defeated = True
+                self.boss_defeated_time = current_time
+        if self.current_zone == 'QUANTUM':
+            for portal in self.quantum_portals[:]:
+                portal.update()
+                if not self.player.is_dead and self.player.rect.colliderect(portal.rect):
+                    if SOUNDS: SOUNDS.play('warp')
+                    self.quantum_dimension = 'OTHER' if self.quantum_dimension == 'NORMAL' else 'NORMAL'
+                    self.player.y -= 100
+                    self.player.rect.topleft = (self.player.x, self.player.y)
+                    self.spawn_explosion(portal.x, portal.y, [(0, 255, 100), (255, 255, 255)], 30)
+            
+            if self.quantum_dimension == 'OTHER':
+                # Damage anchors in other dimension
+                for anchor in self.quantum_anchors[:]:
+                    for b in self.bullets[:]:
+                        if anchor.rect.collidepoint(b.x, b.y):
+                            anchor.health -= 1.0 * (self.player.damage_multiplier if hasattr(self.player, 'damage_multiplier') else 1.0)
+                            self.spawn_explosion(b.x, b.y, [(0, 255, 100), (255, 255, 255)], 8)
+                            if b in self.bullets: self.bullets.remove(b)
+                    for tor in self.torpedoes[:]:
+                        if anchor.rect.colliderect(tor.rect):
+                            anchor.health -= 8.0
+                            self.spawn_explosion(tor.x, tor.y, [(0, 255, 100), (255, 255, 255)], 25)
+                            if tor in self.torpedoes: self.torpedoes.remove(tor)
+                    
+                    if anchor.health <= 0:
+                        self.spawn_explosion(anchor.x, anchor.y, [(0, 255, 100), (255, 255, 255)], 40)
+                        self.quantum_anchors.remove(anchor)
+                        if SOUNDS: SOUNDS.play('crash')
+            
+            elif self.quantum_dimension == 'NORMAL' and not self.quantum_anchors and self.black_hole_core:
+                # Core is now vulnerable in normal dimension!
+                self.black_hole_core.update(self.player, self.enemy_bullets, self)
+                
+                for b in self.bullets[:]:
+                    if self.black_hole_core.rect.collidepoint(b.x, b.y):
+                        self.black_hole_core.health -= 1.0 * (self.player.damage_multiplier if hasattr(self.player, 'damage_multiplier') else 1.0)
+                        self.spawn_explosion(b.x, b.y, [(0, 255, 100), (255, 255, 255)], 8)
+                        if b in self.bullets: self.bullets.remove(b)
+                for tor in self.torpedoes[:]:
+                    if self.black_hole_core.rect.colliderect(tor.rect):
+                        self.black_hole_core.health -= 8.0
+                        self.spawn_explosion(tor.x, tor.y, [(0, 255, 100), (255, 255, 255)], 25)
+                        if tor in self.torpedoes: self.torpedoes.remove(tor)
+                
+                if self.black_hole_core.health <= 0:
+                    self.spawn_explosion(self.black_hole_core.x, self.black_hole_core.y, [(0, 255, 150), (255, 255, 255)], 60)
+                    self.black_hole_core = None
+                    self.wormhole_pos = pygame.math.Vector2(VIRTUAL_WIDTH // 2, -3700)
+                    self.wormhole_spawned = True
+                    self.boss_defeated = True
+                    self.boss_defeated_time = current_time
+ 
+        # Update Level 8 Void Hunter progression
+        if self.current_zone == 'VOID':
+            if self.void_enemies_killed >= 4 and not self.wormhole_spawned:
+                self.wormhole_pos = pygame.math.Vector2(self.player.x, self.player.y - 450)
+                self.wormhole_spawned = True
+                self.boss_defeated = True
+                self.boss_defeated_time = current_time
+
         # Camera dynamic tracking with follow inertia and velocity-based look-ahead sway
         target_cam_y = self.player.y - VIRTUAL_HEIGHT // 2 + self.player.velocity.y * 8
         target_cam_x = self.player.x - VIRTUAL_WIDTH // 2 + self.player.velocity.x * 8
@@ -4248,12 +5628,19 @@ class Game:
 
 
 
-        # Trigger Boss spawn once player has collected 5 matrix cores
+        # Trigger Boss spawn or direct exit wormhole spawn once player has collected 5 matrix cores
         if self.materials_collected >= 5 and not self.wormhole_spawned and self.boss is None:
-            self.boss = Boss(self.current_zone, self.player.y - 450)
-            self.enemies = []
-            self.meteors = []
-            self.enemy_bullets = []
+            cfg = BIOME_CONFIGS.get(self.current_zone, {'boss_count': 0})
+            if cfg.get('boss_count', 0) > 0:
+                self.boss = Boss(self.current_zone, self.player.y - 450)
+                self.enemies = []
+                self.meteors = []
+                self.enemy_bullets = []
+            else:
+                self.wormhole_pos = pygame.math.Vector2(self.player.x, self.player.y - 450)
+                self.wormhole_spawned = True
+                self.boss_defeated = True
+                self.boss_defeated_time = current_time
 
         # Check if player enters active wormhole
         if self.wormhole_spawned:
@@ -4283,7 +5670,7 @@ class Game:
                     self.particles.append(Particle(self.wormhole_pos.x + random.randint(-120, 120), self.wormhole_pos.y + random.randint(-120, 120), WHITE))
 
                 if self.wormhole_charge_timer >= target_charge:
-                    # WORMHOLE WARP: Complete exploration and earn Credits
+                    if SOUNDS: SOUNDS.play('victory')
                     self.player.add_credits(250)
                     
                     # Open-world Exploration progression: Asteroids -> Vulcan -> Aquaris -> Nebula -> Plasma -> Void -> Quantum -> Singularity -> Orion
@@ -4506,17 +5893,20 @@ class Game:
         actual_meteor_delay = self.meteor_spawn_delay
         
         if self.current_zone == 'ASTEROIDS':
-            actual_enemy_delay = 8000 # Default for asteroids
-            actual_meteor_delay = 2000
+            actual_enemy_delay = 3500 # 45% faster
+            actual_meteor_delay = 1200
         elif self.current_zone == 'VULCAN':
-            actual_enemy_delay = 6000 # Slower than before
-            actual_meteor_delay = 8000
+            actual_enemy_delay = 2500 # 48% faster
+            actual_meteor_delay = 5000
         else: # Slower spawning for all other zones after asteroids/vulcan
-            actual_enemy_delay = 15000 # Significantly less frequent
-            actual_meteor_delay = 10000
+            actual_enemy_delay = 5000 # 58% faster
+            actual_meteor_delay = 4000
             
         if self.boss is None and not self.boss_defeated:
-            if current_time - self.enemy_spawn_time > actual_enemy_delay:
+            can_spawn = True
+            if self.current_zone == 'QUANTUM' and getattr(self, 'quantum_dimension', 'NORMAL') == 'NORMAL':
+                can_spawn = False
+            if can_spawn and current_time - self.enemy_spawn_time > actual_enemy_delay:
                 # Spawning logic: Ensure enemies always appear outside the viewport
                 spawn_roll = random.random()
                 if spawn_roll < 0.6: # Top
@@ -4837,7 +6227,7 @@ class Game:
         
         for enemy in self.enemies[:]:
             if getattr(enemy, 'is_phased', False): pass # Skip collision if phased
-            enemy.update(current_time, self.player, self.enemy_bullets, self.bullets, self.torpedoes, self.meteors + self.static_obstacles)
+            enemy.update(current_time, self.player, self.enemy_bullets, self.bullets, self.torpedoes, self.meteors + self.static_obstacles, convoy=self.convoy)
             # Better Despawn: only remove if far from player and haven't shot recently
             dist_to_player = pygame.math.Vector2(enemy.rect.center).distance_to(pygame.math.Vector2(self.player.rect.center))
             if dist_to_player > 2000 and current_time - enemy.last_shot > 5000:
@@ -4846,6 +6236,7 @@ class Game:
             elif not self.player.is_dead and self.player.rect.colliderect(enemy.rect):
                 crash_dmg = 2 if enemy.subtype not in ('HEAVY', 'ELITE') else 3
                 if getattr(enemy, 'zone', '') == 'AQUARIS' and getattr(enemy, 'subtype', '') == 'SCOUT': crash_dmg = 4
+                if getattr(enemy, 'zone', '') == 'TUTORIAL': crash_dmg = 0
                 
                 # Vanguard Dash Ram
                 dash_ram = getattr(self.player, 'dash_damage', 0)
@@ -4863,7 +6254,7 @@ class Game:
         for meteor in self.meteors[:]:
             meteor.update()
             if not self.player.is_dead and self.player.rect.colliderect(meteor.rect):
-                self._damage_player(current_time, damage=0.5)
+                self._damage_player(current_time, damage=0.5, sound_type='crash')
                 self._destroy_meteor(meteor)
 
         # Update small portals collisions (warp player forward by 2000px on entry)
@@ -4887,9 +6278,9 @@ class Game:
             if not self.player.is_dead and self.player.rect.colliderect(obs.rect):
                 if isinstance(obs, FactoryStructure):
                     # We handle pushback in the update step; only apply minor damage tick here
-                    self._damage_player(current_time, damage=0.1)
+                    self._damage_player(current_time, damage=0.1, sound_type='crash')
                 else:
-                    self._damage_player(current_time, damage=0.5)
+                    self._damage_player(current_time, damage=0.5, sound_type='crash')
                     self.spawn_explosion(obs.x + obs.size // 2, obs.y + obs.size // 2, 
                                          [(128, 128, 128), (80, 80, 80)], 20)
                     if obs in self.static_obstacles:
@@ -4919,6 +6310,7 @@ class Game:
                         enemy.health -= 0.5 * self.player.damage_multiplier
                         enemy.health -= bullet.damage * self.player.damage_multiplier
                         self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                        if SOUNDS: SOUNDS.play_spatial('metal_hit', bullet.x, bullet.y, self.player.x, self.player.y)
                         if enemy.health <= 0:
                             self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, 
                                                  [(255, 0, 0), (255, 128, 0), (255, 255, 0)], 15)
@@ -4930,6 +6322,7 @@ class Game:
                         self.bullets.remove(bullet)
                     d.health -= bullet.damage * self.player.damage_multiplier
                     self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                    if SOUNDS: SOUNDS.play_spatial('metal_hit', bullet.x, bullet.y, self.player.x, self.player.y)
                     if d.health <= 0:
                         self.spawn_explosion(d.x, d.y, [(200,100,50), (100,50,20)], 20)
                         for _ in range(random.randint(5, 10)):
@@ -4959,6 +6352,7 @@ class Game:
                     if not bullet.piercing and bullet in self.bullets:
                         self.bullets.remove(bullet)
                     self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                    if SOUNDS: SOUNDS.play_spatial('metal_hit', bullet.x, bullet.y, self.player.x, self.player.y)
                     if hasattr(obs, 'health'):
                         if isinstance(obs, FactoryStructure):
                             pass
@@ -5617,6 +7011,8 @@ class Game:
 
     def _kill_enemy(self, enemy):
         if enemy in self.enemies:
+            if self.current_zone == 'VOID' and getattr(enemy, 'name', '') == 'Abyss Sentinel':
+                self.void_enemies_killed += 1
             if hasattr(enemy, 'on_death'):
                 enemy.on_death(self.enemy_bullets, self.player)
             self.enemies.remove(enemy)
@@ -5784,6 +7180,318 @@ class Game:
             txt = font.render("THREAT TRACKING", True, RED)
             screen.blit(txt, (draw_x - txt.get_width()//2, draw_y + size + 10))
 
+    def draw_intro_overlay(self, surf, intro_time, ticks):
+        surf.fill((3, 3, 6))
+        # Draw cyber background grid
+        grid_spacing = 50
+        grid_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+        for gx_line in range(0, VIRTUAL_WIDTH, grid_spacing):
+            pygame.draw.line(grid_surf, (0, 255, 255, 6), (gx_line, 0), (gx_line, VIRTUAL_HEIGHT))
+        for gy_line in range(0, VIRTUAL_HEIGHT, grid_spacing):
+            pygame.draw.line(grid_surf, (0, 255, 255, 6), (0, gy_line), (VIRTUAL_WIDTH, gy_line))
+        surf.blit(grid_surf, (0, 0))
+        
+        boot_lines = [
+            ">> BOOTING ZENITH SYSTEMS KERNEL v9.42...",
+            ">> MOUNTING CRYPTO-DRIVE SYSTEM... [ OK ]",
+            ">> SYSTEM CALIBRATION: ACTIVE",
+            "   THRUST CONTROL INTERFACE.... [ READY ]",
+            "   DEFLECTOR SHIELD MATRIX..... [ ONLINE ]",
+            "   WEAPON COOLDOWN SYSTEMS..... [ CALIBRATED ]",
+            "   HYPERDRIVE NAVIGATION....... [ READY ]",
+            ">> CONNECTING TO NEURAL PILOT DATASTREAM...",
+            ">> STATUS: ZENITH CORE SECURE. BOOT COMPLETE."
+        ]
+        
+        char_speed = 0.08
+        y_offset = 120
+        
+        for i, line in enumerate(boot_lines):
+            line_start_time = i * 450
+            if intro_time > line_start_time:
+                chars_to_show = int((intro_time - line_start_time) * char_speed)
+                visible_text = line[:chars_to_show]
+                color = CYAN
+                if "[ OK ]" in visible_text or "[ ONLINE ]" in visible_text or "[ READY ]" in visible_text or "[ CALIBRATED ]" in visible_text:
+                    color = GREEN
+                text_surf = self.small_font.render(visible_text, True, color)
+                surf.blit(text_surf, (60, y_offset + i * 32))
+        
+        if intro_time >= 2800:
+            reveal_time = intro_time - 2800
+            alpha = min(255, int((reveal_time / 1800.0) * 255))
+            
+            cx, cy = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
+            shift_x = int(4 * math.sin(ticks * 0.08))
+            shift_y = int(3 * math.cos(ticks * 0.06))
+            
+            title_red = self.large_font.render("ZENITH", True, (255, 40, 40))
+            title_cyan = self.large_font.render("ZENITH", True, (40, 255, 255))
+            title_main = self.large_font.render("ZENITH", True, WHITE)
+            
+            title_red.set_alpha(alpha)
+            title_cyan.set_alpha(alpha)
+            title_main.set_alpha(alpha)
+            
+            glow = pygame.Surface((title_main.get_width() + 160, title_main.get_height() + 160), pygame.SRCALPHA)
+            pygame.draw.circle(glow, (0, 255, 255, int((alpha // 5) * (0.6 + 0.4 * math.sin(ticks * 0.015)))), (glow.get_width()//2, glow.get_height()//2), 120)
+            surf.blit(glow, (cx - glow.get_width()//2, cy - glow.get_height()//2 - 60))
+            
+            surf.blit(title_red, (cx - title_red.get_width()//2 - shift_x, cy - title_red.get_height()//2 - 60 - shift_y), special_flags=pygame.BLEND_ADD)
+            surf.blit(title_cyan, (cx - title_cyan.get_width()//2 + shift_x, cy - title_cyan.get_height()//2 - 60 + shift_y), special_flags=pygame.BLEND_ADD)
+            surf.blit(title_main, (cx - title_main.get_width()//2, cy - title_main.get_height()//2 - 60))
+            
+            if reveal_time > 800:
+                bar_w = 460
+                bar_h = 6
+                bar_x = cx - bar_w // 2
+                bar_y = cy + 60
+                progress = min(1.0, (reveal_time - 800) / 1200.0)
+                pygame.draw.rect(surf, (40, 40, 45), (bar_x, bar_y, bar_w, bar_h), border_radius=3)
+                pygame.draw.rect(surf, CYAN, (bar_x, bar_y, int(bar_w * progress), bar_h), border_radius=3)
+                
+                if progress >= 1.0:
+                    ready_text = self.small_font.render("PILOT INTERFACE: INITIALIZED // PRESS ANY KEY TO DEPLOY", True, GREEN)
+                    ready_text.set_alpha(int(140 + 115 * math.sin(pygame.time.get_ticks() * 0.008)))
+                    surf.blit(ready_text, (cx - ready_text.get_width()//2, bar_y + 35))
+                    
+        for gy in range(0, VIRTUAL_HEIGHT, 4):
+            pygame.draw.line(surf, (0, 0, 0, 30), (0, gy), (VIRTUAL_WIDTH, gy), 1)
+            
+        if random.random() < 0.015:
+            flicker_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+            flicker_surf.fill((0, 255, 255, random.randint(8, 25)))
+            surf.blit(flicker_surf, (0, 0))
+
+    def draw_main_menu_overlay(self, surf, ticks, draw_state=None):
+        current_state = draw_state if draw_state is not None else self.state
+        for star in self.stars:
+            val = math.sin(pygame.time.get_ticks() * star[5] + star[6])
+            alpha = int(128 + 127 * val)
+            color = tuple(max(0, min(255, int(c * (alpha / 255.0)))) for c in star[4])
+            pygame.draw.circle(surf, color, (int(star[0]), int(star[1])), star[3])
+
+        nebula_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+        clouds = [
+            (PURPLE, 300, 300, 0.0002),
+            (INDIGO, 900, 600, -0.00015),
+            (MAGENTA, 200, 700, 0.0003),
+            (BLUE, 1000, 200, -0.00025)
+        ]
+        for col, bx, by, speed in clouds:
+            nx = bx + math.sin(ticks * speed) * 80
+            ny = by + math.cos(ticks * speed * 0.7) * 80
+            base_r = 220 + math.sin(ticks * 0.0004) * 30
+            for layer in range(5):
+                alpha = int(22 / (layer + 1))
+                lr = int(base_r * (1.0 + layer * 0.3))
+                pygame.draw.circle(nebula_surf, (*col, alpha), (int(nx), int(ny)), lr)
+        surf.blit(nebula_surf, (0, 0))
+
+        grid_spacing = 40
+        grid_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+        for gx_line in range(0, VIRTUAL_WIDTH, grid_spacing):
+            pygame.draw.line(grid_surf, (0, 255, 255, 15), (gx_line, 0), (gx_line, VIRTUAL_HEIGHT))
+        for gy_line in range(0, VIRTUAL_HEIGHT, grid_spacing):
+            pygame.draw.line(grid_surf, (0, 255, 255, 15), (0, gy_line), (VIRTUAL_WIDTH, gy_line))
+        scan_y = (pygame.time.get_ticks() // 4) % VIRTUAL_HEIGHT
+        pygame.draw.line(grid_surf, (0, 255, 255, 35), (0, scan_y), (VIRTUAL_WIDTH, scan_y), width=2)
+        surf.blit(grid_surf, (0, 0))
+        
+        border_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+        pygame.draw.rect(border_surf, (0, 255, 255, 40), (10, 10, VIRTUAL_WIDTH - 20, VIRTUAL_HEIGHT - 20), width=1, border_radius=12)
+        
+        br_len = 30
+        pygame.draw.rect(border_surf, CYAN, (10, 10, br_len, 4))
+        pygame.draw.rect(border_surf, CYAN, (10, 10, 4, br_len))
+        pygame.draw.rect(border_surf, CYAN, (VIRTUAL_WIDTH - 10 - br_len, 10, br_len, 4))
+        pygame.draw.rect(border_surf, CYAN, (VIRTUAL_WIDTH - 14, 10, 4, br_len))
+        pygame.draw.rect(border_surf, CYAN, (10, VIRTUAL_HEIGHT - 14, br_len, 4))
+        pygame.draw.rect(border_surf, CYAN, (10, VIRTUAL_HEIGHT - 10 - br_len, 4, br_len))
+        pygame.draw.rect(border_surf, CYAN, (VIRTUAL_WIDTH - 10 - br_len, VIRTUAL_HEIGHT - 14, br_len, 4))
+        pygame.draw.rect(border_surf, CYAN, (VIRTUAL_WIDTH - 14, VIRTUAL_HEIGHT - 10 - br_len, 4, br_len))
+        surf.blit(border_surf, (0, 0))
+
+        mx, my = pygame.mouse.get_pos()
+        vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
+        vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
+
+        if current_state == 'MAIN_MENU':
+            pulse = math.sin(pygame.time.get_ticks() * 0.005)
+            cx, cy = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 - 200
+            
+            shift_x = int(3 * math.sin(ticks * 0.06))
+            shift_y = int(2 * math.cos(ticks * 0.04))
+            
+            title_red = self.large_font.render("ZENITH", True, (255, 50, 50))
+            title_cyan = self.large_font.render("ZENITH", True, (50, 255, 255))
+            title_main = self.large_font.render("ZENITH", True, (int(200 + 55 * pulse), 255, 255))
+            
+            surf.blit(title_red, (cx - title_red.get_width()//2 - shift_x, cy - title_red.get_height()//2 - shift_y), special_flags=pygame.BLEND_ADD)
+            surf.blit(title_cyan, (cx - title_cyan.get_width()//2 + shift_x, cy - title_cyan.get_height()//2 + shift_y), special_flags=pygame.BLEND_ADD)
+            surf.blit(title_main, (cx - title_main.get_width()//2, cy - title_main.get_height()//2))
+            
+            input_prompt = self.font.render("ENTER PILOT CALLSIGN:", True, WHITE)
+            input_box_rect = pygame.Rect(VIRTUAL_WIDTH // 2 - 200, 350, 400, 50)
+            pygame.draw.rect(surf, DARK_GRAY, input_box_rect, border_radius=5)
+            
+            border_color = CYAN if self.input_active else SLATE_GRAY
+            if self.input_active and pygame.time.get_ticks() % 1000 < 500:
+                border_color = WHITE
+            pygame.draw.rect(surf, border_color, input_box_rect, width=2, border_radius=5)
+            
+            surf.blit(input_prompt, (VIRTUAL_WIDTH // 2 - input_prompt.get_width() // 2, 300))
+            
+            name_text = self.player_name + ("|" if self.input_active and pygame.time.get_ticks() % 1000 < 500 else "")
+            name_surf = self.font.render(name_text, True, YELLOW)
+            name_rect = name_surf.get_rect(center=input_box_rect.center)
+            surf.blit(name_surf, name_rect)
+            
+            continue_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 100, 430, 200, 50)
+            btn_color = CYAN if continue_btn.collidepoint(vmx, vmy) else BLUE
+            pygame.draw.rect(surf, btn_color, continue_btn, border_radius=8)
+            pygame.draw.rect(surf, WHITE, continue_btn, width=1, border_radius=8)
+            btn_lbl = self.font.render("CONTINUE", True, BLACK if btn_color == CYAN else WHITE)
+            surf.blit(btn_lbl, (continue_btn.centerx - btn_lbl.get_width() // 2, continue_btn.centery - btn_lbl.get_height() // 2))
+
+            controls_box = pygame.Rect(VIRTUAL_WIDTH // 2 - 260, 500, 520, 360)
+            box_surf = pygame.Surface((controls_box.width, controls_box.height), pygame.SRCALPHA)
+            box_surf.fill((5, 5, 8, 120))
+            pygame.draw.rect(box_surf, (0, 255, 255, 120), (0, 0, controls_box.width, controls_box.height), width=1)
+            surf.blit(box_surf, (controls_box.x, controls_box.y))
+            
+            controls_title = self.font.render("CONTROLS & HOW TO PLAY:", True, CYAN)
+            surf.blit(controls_title, (controls_box.x + 20, controls_box.y + 15))
+            
+            controls = [
+                "W/S (or UP/DOWN)   : Thrust Forward / Reverse",
+                "A/D (or L/R keys)  : Evade Dash (on Cooldown)",
+                "LEFT SHIFT         : Drop Anti-Missile Flare",
+                "MOUSE MOVEMENT     : Aim / Rotate Ship",
+                "LEFT MOUSE CLICK   : Shoot Primary Weapon",
+                "RIGHT MOUSE CLICK  : Heavy Torpedo (In Combat)",
+                "GOAL: Fly UP, Collect 5 Cores & Warp Out",
+                "P / ESCAPE KEY     : Open Upgrades at Space Station",
+                "Q / E              : Use Class Abilities"
+            ]
+            for idx, text in enumerate(controls):
+                ctrl_txt = self.small_font.render(text, True, (220, 240, 255))
+                surf.blit(ctrl_txt, (controls_box.x + 20, controls_box.y + 50 + idx * 30))
+
+        elif current_state == 'CLASS_SELECT':
+            sel_lbl = self.large_font.render("SELECT SHIP CLASS", True, CYAN)
+            surf.blit(sel_lbl, (VIRTUAL_WIDTH // 2 - sel_lbl.get_width() // 2, 70))
+            
+            pilot_lbl = self.font.render(f"PILOT CALLSIGN: {self.player_name.upper()}", True, YELLOW)
+            surf.blit(pilot_lbl, (VIRTUAL_WIDTH // 2 - pilot_lbl.get_width() // 2, 150))
+            
+            classes = ['RANGER', 'ENGINEER', 'VANGUARD', 'SNIPER', 'ASSASSIN']
+            for idx, cls in enumerate(classes):
+                btn_rect = pygame.Rect(100 + idx * 200, 220, 180, 50)
+                is_hover = btn_rect.collidepoint(vmx, vmy)
+                is_active = self.selected_class == cls
+                
+                bg_col = (40, 40, 45)
+                if is_active:
+                    bg_col = CYAN
+                elif is_hover:
+                    bg_col = (80, 80, 85)
+                    
+                pygame.draw.rect(surf, bg_col, btn_rect, border_radius=6)
+                pygame.draw.rect(surf, WHITE if is_active else SLATE_GRAY, btn_rect, width=1, border_radius=6)
+                
+                lbl_col = BLACK if is_active else WHITE
+                lbl = self.font.render(cls, True, lbl_col)
+                surf.blit(lbl, (btn_rect.centerx - lbl.get_width() // 2, btn_rect.centery - lbl.get_height() // 2))
+
+            prev_box = pygame.Rect(100, 310, 400, 400)
+            pygame.draw.rect(surf, (10, 10, 15, 180), prev_box, border_radius=8)
+            pygame.draw.rect(surf, CYAN, prev_box, width=1, border_radius=8)
+            prev_title = self.font.render("VESSEL HULL PREVIEW", True, CYAN)
+            surf.blit(prev_title, (prev_box.centerx - prev_title.get_width() // 2, prev_box.y + 15))
+            
+            self.player.x = prev_box.centerx - self.player.width // 2
+            self.player.y = prev_box.centery - self.player.height // 2 - 20
+            self.player.angle = (pygame.time.get_ticks() // 25) % 360
+            
+            self.player.draw(surf, camera_y=0)
+
+            desc_box = pygame.Rect(520, 310, 580, 400)
+            pygame.draw.rect(surf, (10, 10, 15, 180), desc_box, border_radius=8)
+            pygame.draw.rect(surf, CYAN, desc_box, width=1, border_radius=8)
+            
+            desc_title = self.font.render(f"CLASS SPECIFICATION: {self.selected_class}", True, YELLOW)
+            surf.blit(desc_title, (desc_box.x + 20, desc_box.y + 15))
+            
+            class_desc = {
+                'RANGER': "Patrol and intercept class. Balanced stats and versatile loadout. Employs special maneuver thrusters that reduce evade dash cooldown.",
+                'ENGINEER': "Tactical support vessel. Slow shield automatic regeneration capability. Deploys custom auxiliary repair drones and defense nodes.",
+                'VANGUARD': "Heavy armor cruiser. Maximum plating integrity and deflection shields. Built for ramming attacks and bullet absorption.",
+                'SNIPER': "Long-range bombardment asset. Possesses high-energy piercing weapons. Fires high-damage precision railgun bolts.",
+                'ASSASSIN': "Infiltration model. Deploys a cloaking drive that makes the ship temporarily invisible and invulnerable, ideal for sneak attacks."
+            }
+            
+            desc_text = class_desc.get(self.selected_class, "")
+            words = desc_text.split(' ')
+            lines = []
+            curr_line = ""
+            for w in words:
+                test_line = curr_line + " " + w if curr_line else w
+                if self.font.size(test_line)[0] < desc_box.width - 40:
+                    curr_line = test_line
+                else:
+                    lines.append(curr_line)
+                    curr_line = w
+            if curr_line:
+                lines.append(curr_line)
+                
+            for idx, line in enumerate(lines):
+                line_surf = self.font.render(line, True, (220, 230, 245))
+                surf.blit(line_surf, (desc_box.x + 20, desc_box.y + 55 + idx * 26))
+
+            stats_y = desc_box.y + 190
+            stats_lbl = self.font.render("VESSEL STATISTICS:", True, CYAN)
+            surf.blit(stats_lbl, (desc_box.x + 20, stats_y))
+            
+            class_stats = {
+                'RANGER':    {'shields': 4, 'speed': 8.5, 'dmg': 7, 'special': "Fast Dash CD"},
+                'ENGINEER':  {'shields': 5, 'speed': 6.5, 'dmg': 5, 'special': "Repair Drones"},
+                'VANGUARD':  {'shields': 6, 'speed': 5.5, 'dmg': 6, 'special': "Heavy Plating"},
+                'SNIPER':    {'shields': 3, 'speed': 7.5, 'dmg': 10, 'special': "Railgun Snipe"},
+                'ASSASSIN':  {'shields': 3, 'speed': 9.0, 'dmg': 8, 'special': "Cloaking Drive"}
+            }
+            
+            stats = class_stats.get(self.selected_class, {'shields': 4, 'speed': 8.0, 'dmg': 6, 'special': "None"})
+            
+            sh_txt = self.small_font.render(f"Shield Matrix Capacity: {stats['shields']}/6", True, WHITE)
+            surf.blit(sh_txt, (desc_box.x + 20, stats_y + 25))
+            pygame.draw.rect(surf, (40, 40, 45), (desc_box.x + 20, stats_y + 43, 350, 8), border_radius=3)
+            pygame.draw.rect(surf, CYAN, (desc_box.x + 20, stats_y + 43, int(350 * (stats['shields'] / 6.0)), 8), border_radius=3)
+            
+            sp_txt = self.small_font.render(f"Max Engine Impulse: {stats['speed']}/10.0", True, WHITE)
+            surf.blit(sp_txt, (desc_box.x + 20, stats_y + 60))
+            pygame.draw.rect(surf, (40, 40, 45), (desc_box.x + 20, stats_y + 78, 350, 8), border_radius=3)
+            pygame.draw.rect(surf, GOLD, (desc_box.x + 20, stats_y + 78, int(350 * (stats['speed'] / 10.0)), 8), border_radius=3)
+            
+            dmg_txt = self.small_font.render(f"Weapon Damage Caliber: {stats['dmg']}/10", True, WHITE)
+            surf.blit(dmg_txt, (desc_box.x + 20, stats_y + 95))
+            pygame.draw.rect(surf, (40, 40, 45), (desc_box.x + 20, stats_y + 113, 350, 8), border_radius=3)
+            pygame.draw.rect(surf, RED, (desc_box.x + 20, stats_y + 113, int(350 * (stats['dmg'] / 10.0)), 8), border_radius=3)
+            
+            spec_txt = self.font.render(f"SYSTEM OVERDRIVE: {stats['special'].upper()}", True, GREEN)
+            surf.blit(spec_txt, (desc_box.x + 20, stats_y + 135))
+
+            launch_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 150, 740, 300, 60)
+            pulse_amt = math.sin(pygame.time.get_ticks() * 0.01)
+            launch_color = (0, 200 + int(55 * pulse_amt), 200 + int(55 * pulse_amt))
+            if launch_btn.collidepoint(vmx, vmy):
+                launch_color = GREEN
+            pygame.draw.rect(surf, launch_color, launch_btn, border_radius=8)
+            pygame.draw.rect(surf, WHITE, launch_btn, width=1, border_radius=8)
+            
+            launch_lbl = self.font.render("LAUNCH MISSION", True, BLACK if launch_color == GREEN else WHITE)
+            surf.blit(launch_lbl, (launch_btn.centerx - launch_lbl.get_width() // 2, launch_btn.centery - launch_lbl.get_height() // 2))
+
     def _draw(self):
         self.virtual_screen.fill(BLACK)
         self.ui_surface.fill((0, 0, 0, 0))
@@ -5816,8 +7524,35 @@ class Game:
                 color = tuple(max(0, min(255, int(c * (alpha / 255.0)))) for c in star[4])
                 pygame.draw.circle(self.virtual_screen, color, (int(star_draw_x), int(star_draw_y)), star[3])
 
+            # Update and draw shooting stars (meteor streaks)
+            if not hasattr(self, 'shooting_stars'):
+                self.shooting_stars = []
+            if random.random() < 0.008:
+                sx = random.randint(100, VIRTUAL_WIDTH)
+                sy = random.randint(-50, VIRTUAL_HEIGHT // 2)
+                speed = random.uniform(8.0, 15.0)
+                angle = random.uniform(130, 150)
+                length = random.randint(40, 80)
+                life = random.randint(15, 30)
+                self.shooting_stars.append({'x': sx, 'y': sy, 'speed': speed, 'angle': angle, 'length': length, 'life': life, 'max_life': life})
+            for ss in self.shooting_stars[:]:
+                rad = math.radians(ss['angle'])
+                ss['x'] += ss['speed'] * math.cos(rad)
+                ss['y'] += ss['speed'] * math.sin(rad)
+                ss['life'] -= 1
+                if ss['life'] <= 0:
+                    self.shooting_stars.remove(ss)
+                else:
+                    salpha = int(255 * (ss['life'] / ss['max_life']))
+                    trail_x = ss['x'] - ss['length'] * math.cos(rad)
+                    trail_y = ss['y'] - ss['length'] * math.sin(rad)
+                    trail_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+                    pygame.draw.line(trail_surf, (200, 240, 255, salpha), (int(ss['x']), int(ss['y'])), (int(trail_x), int(trail_y)), 2)
+                    self.virtual_screen.blit(trail_surf, (0, 0))
+
             zone_color = BIOME_CONFIGS.get(self.current_zone, {'theme_color': GRAY})['theme_color']
             self._draw_background_nebula(self.virtual_screen, self.camera_y, self.camera_x, zone_color)
+            self._draw_cyber_grid(self.virtual_screen, self.camera_y, self.camera_x, zone_color)
             
             # Render massive planet (raised center and dynamic size)
             planet_radius = getattr(self, 'planet_radius', 800)
@@ -5848,8 +7583,13 @@ class Game:
             if hasattr(self, 'bg_structure'):
                 self.bg_structure.draw(self.virtual_screen, self.camera_y, self.camera_x)
 
-        # We now apply screen shake to the entire final scaled screen
+        # Calculate screen shake for game world entities (keeps HUD static)
         swx, swy = 0, 0
+        if self.screen_shake > 0:
+            shake_amt = min(self.screen_shake, 5)
+            swx = random.randint(-shake_amt, shake_amt)
+            swy = random.randint(-shake_amt, shake_amt)
+            self.screen_shake = max(0, self.screen_shake - 1)
 
         if self.state == 'HUB' or (self.state == 'PAUSED' and self.current_zone == 'HUB'):
             for star in self.stars:
@@ -5857,6 +7597,9 @@ class Game:
                 alpha = int(128 + 127 * val)
                 color = tuple(max(0, min(255, int(c * (alpha / 255.0)))) for c in star[4])
                 pygame.draw.circle(self.virtual_screen, color, (int(star[0] + swx), int(star[1] + swy)), star[3])
+            
+            self._draw_background_nebula(self.virtual_screen, ticks * 0.05, ticks * 0.05, BLUE)
+            self._draw_cyber_grid(self.virtual_screen, ticks * 0.05, ticks * 0.05, CYAN)
             
             # Draw Stations (Rotating cyber-octagons)
             stations = [
@@ -5905,6 +7648,10 @@ class Game:
                         center = (1000 + swx, 220 + swy)
                         lbl_y = 290 + swy
                         info_y = 320 + swy
+                    elif order == 3:
+                        center = (450 + swx, 630 + swy)
+                        lbl_y = 700 + swy
+                        info_y = 722 + swy
                     else:
                         center = (200 + swx, 220 + swy)
                         lbl_y = 290 + swy
@@ -5932,22 +7679,23 @@ class Game:
             welcome = self.large_font.render(welcome_text, True, WHITE)
             self.virtual_screen.blit(welcome, (VIRTUAL_WIDTH // 2 - welcome.get_width() // 2, 30))
             
-            # Draw Cheat Portals for developer testing
-            cheat_lbl = self.font.render("DEV CHEAT PORTALS (INSTANT WARP):", True, RED)
-            self.virtual_screen.blit(cheat_lbl, (VIRTUAL_WIDTH // 2 - cheat_lbl.get_width() // 2, 85))
-            
-            cheat_zones = ['ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'VOID', 'QUANTUM', 'SINGULARITY', 'ORION']
-            for i, zone in enumerate(cheat_zones):
-                cx = 100 + i * 125
-                cy = 130
-                cfg = BIOME_CONFIGS[zone]
-                color = cfg['theme_color']
-                pygame.draw.circle(self.virtual_screen, color, (cx, cy), 18, width=1)
-                pygame.draw.circle(self.virtual_screen, (40, 40, 40), (cx, cy), 14)
-                lbl = self.font.render(str(i + 1), True, color)
-                self.virtual_screen.blit(lbl, (cx - lbl.get_width() // 2, cy - lbl.get_height() // 2))
-                name_lbl = pygame.font.SysFont("Arial", 10).render(zone[:4], True, GRAY)
-                self.virtual_screen.blit(name_lbl, (cx - name_lbl.get_width() // 2, cy + 20))
+            # Draw Cheat Portals for developer testing (if dev mode enabled)
+            if getattr(self, 'dev_mode', False):
+                cheat_lbl = self.font.render("DEV CHEAT PORTALS (INSTANT WARP):", True, RED)
+                self.virtual_screen.blit(cheat_lbl, (VIRTUAL_WIDTH // 2 - cheat_lbl.get_width() // 2, 85))
+                
+                cheat_zones = ['ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'VOID', 'QUANTUM', 'SINGULARITY', 'ORION']
+                for i, zone in enumerate(cheat_zones):
+                    cx = 100 + i * 125
+                    cy = 130
+                    cfg = BIOME_CONFIGS[zone]
+                    color = cfg['theme_color']
+                    pygame.draw.circle(self.virtual_screen, color, (cx, cy), 18, width=1)
+                    pygame.draw.circle(self.virtual_screen, (40, 40, 40), (cx, cy), 14)
+                    lbl = self.font.render(str(i + 1), True, color)
+                    self.virtual_screen.blit(lbl, (cx - lbl.get_width() // 2, cy - lbl.get_height() // 2))
+                    name_lbl = pygame.font.SysFont("Arial", 10).render(zone[:4], True, GRAY)
+                    self.virtual_screen.blit(name_lbl, (cx - name_lbl.get_width() // 2, cy + 20))
             
             self.player.draw(self.virtual_screen, camera_y=0)
             
@@ -5961,6 +7709,8 @@ class Game:
                         portal_center = (600, 780)
                     elif order == 1:
                         portal_center = (1000, 220)
+                    elif order == 3:
+                        portal_center = (450, 630)
                     else:
                         portal_center = (200, 220)
                     
@@ -6181,6 +7931,36 @@ class Game:
             for scrap in self.scraps:
                 scrap.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
             
+            # Draw Convoy in Level 2
+            if self.current_zone == 'VULCAN' and self.convoy:
+                self.convoy.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+                
+            # Draw Energy Cells in Level 5
+            if self.current_zone == 'PLASMA':
+                for cell in self.energy_cells:
+                    cell.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+                    
+            if self.current_zone == 'QUANTUM':
+                for portal in self.quantum_portals:
+                    portal.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+                if self.quantum_dimension == 'OTHER':
+                    for anchor in self.quantum_anchors:
+                        anchor.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+                elif self.quantum_dimension == 'NORMAL' and self.black_hole_core:
+                    self.black_hole_core.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+                    
+            # Draw Supernova in Level 4
+            if self.current_zone == 'NEBULA' and self.supernova_y is not None:
+                draw_y = self.supernova_y - (self.camera_y + swy)
+                if draw_y < VIRTUAL_HEIGHT + 400:
+                    ticks = pygame.time.get_ticks()
+                    wave_surf = pygame.Surface((VIRTUAL_WIDTH, max(200, int(VIRTUAL_HEIGHT + 400 - draw_y))), pygame.SRCALPHA)
+                    wave_surf.fill((255, 69, 0, 90))
+                    for i in range(3):
+                        wave_offset = int(15 * math.sin(ticks * 0.02 + i))
+                        pygame.draw.rect(wave_surf, (255, 140 + i * 30, 0, 160 - i * 40), (0, wave_offset, VIRTUAL_WIDTH, 40))
+                    self.virtual_screen.blit(wave_surf, (0, int(draw_y)))
+            
             self.player.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
             
             for ss in self.support_ships:
@@ -6210,8 +7990,30 @@ class Game:
                 
                 cfg = BIOME_CONFIGS.get(self.current_zone, {'name': 'Unknown Sector', 'desc': 'Hostile Environment'})
                 lbl_zone = self.large_font.render(cfg['name'].upper(), True, CYAN)
-                lbl_desc = self.font.render(f"OBJECTIVE: GATHER 5 MATRIX CORES", True, WHITE)
-                lbl_extra = self.small_font.render("SYSTEM STATUS: EXPLORATION MODE // HACK TERMINALS FOR LOOT", True, GREEN)
+                
+                lbl_desc_str = "OBJECTIVE: GATHER 5 MATRIX CORES"
+                lbl_extra_str = "SYSTEM STATUS: EXPLORATION MODE // HACK TERMINALS FOR LOOT"
+                if self.current_zone == 'VULCAN':
+                    lbl_desc_str = "OBJECTIVE: DEFEND THE CONVOY TRANSPORT"
+                    lbl_extra_str = "SYSTEM STATUS: ESCORT MISSION // DESTROY INTERCEPTORS"
+                elif self.current_zone == 'NEBULA':
+                    lbl_desc_str = "OBJECTIVE: ESCAPE THE SUPERNOVA CHASE"
+                    lbl_extra_str = "SYSTEM STATUS: SECTOR COLLAPSE DETECTED // FLY UPWARD IMMEDIATELY"
+                elif self.current_zone == 'PLASMA':
+                    lbl_desc_str = "OBJECTIVE: COLLECT 5 PLASMA ENERGY CELLS"
+                    lbl_extra_str = "SYSTEM STATUS: OVERLOAD REACTOR CORES"
+                elif self.current_zone == 'QUANTUM':
+                    lbl_desc_str = "OBJECTIVE: DESTROY THE QUANTUM BLACK HOLE CORE"
+                    lbl_extra_str = "SYSTEM STATUS: CHOP THROUGH QUANTUM RIFTS TO HIT Hidden CORE"
+                elif self.current_zone == 'VOID':
+                    lbl_desc_str = "OBJECTIVE: ELIMINATE 10 VOID THREATS"
+                    lbl_extra_str = "SYSTEM STATUS: CLEAR EXTRADIMENSIONAL ASSASSINS"
+                elif self.current_zone in ('AQUARIS', 'SINGULARITY', 'ORION'):
+                    lbl_desc_str = "OBJECTIVE: DEFEAT THE SECTOR BOSS"
+                    lbl_extra_str = "SYSTEM STATUS: ELIMINATE MAJOR THREAT"
+                    
+                lbl_desc = self.font.render(lbl_desc_str, True, WHITE)
+                lbl_extra = self.small_font.render(lbl_extra_str, True, GREEN)
                 
                 self.virtual_screen.blit(lbl_zone, (VIRTUAL_WIDTH // 2 - lbl_zone.get_width() // 2, intro_y + 20))
                 self.virtual_screen.blit(lbl_desc, (VIRTUAL_WIDTH // 2 - lbl_desc.get_width() // 2, intro_y + 90))
@@ -6242,14 +8044,14 @@ class Game:
             zone_text = self.font.render(f"Location: {self.current_zone}", True, WHITE)
             self.virtual_screen.blit(zone_text, (15, 42))
             
-            shield_lbl = self.small_font.render("SHIELDS:", True, CYAN)
-            self.virtual_screen.blit(shield_lbl, (15, 62))
-            
             player_name_lbl = self.small_font.render(f"PILOT: {self.player_name}", True, WHITE)
-            self.virtual_screen.blit(shield_lbl, (15, 72))
+            self.virtual_screen.blit(player_name_lbl, (15, 58))
+            
+            shield_lbl = self.small_font.render("SHIELDS:", True, CYAN)
+            self.virtual_screen.blit(shield_lbl, (15, 74))
             
             shield_x = 15
-            shield_y = 90
+            shield_y = 92
             segment_width = 25
             segment_height = 12
             for i in range(self.player.max_shields):
@@ -6337,15 +8139,43 @@ class Game:
                 mm_label = self.small_font.render("MAP SCANNER", True, SLATE_GRAY)
                 self.virtual_screen.blit(mm_label, (mm_x, mm_y - 20))
                 
-                core_label = self.small_font.render(f"CORES: {self.materials_collected}/5", True, WHITE)
+                objective_text_str = f"CORES: {self.materials_collected}/5"
+                if self.current_zone == 'TUTORIAL':
+                    objective_text_str = "TRAINING RANGE"
+                elif self.current_zone == 'VULCAN' and self.convoy:
+                    objective_text_str = f"CONVOY HP: {int(self.convoy.health)}%  |  TIME LEFT: {int(self.convoy_defend_timer)}s"
+                elif self.current_zone == 'NEBULA':
+                    objective_text_str = f"ESCAPE: {max(0, int(-self.player.y))}/6000"
+                elif self.current_zone == 'PLASMA':
+                    objective_text_str = f"CELLS: {self.energy_cells_collected}/5"
+                elif self.current_zone == 'QUANTUM':
+                    if self.quantum_anchors:
+                        objective_text_str = f"ANCHORS LEFT: {len(self.quantum_anchors)}/3  ({self.quantum_dimension})"
+                    elif self.black_hole_core:
+                        objective_text_str = f"DESTROY CORE: {int(self.black_hole_core.health)}%  ({self.quantum_dimension})"
+                    else:
+                        objective_text_str = "CORE DESTROYED"
+                elif self.current_zone == 'VOID':
+                    objective_text_str = f"SENTINELS DESTROYED: {self.void_enemies_killed}/4"
+                elif self.boss:
+                    objective_text_str = f"BOSS HP: {int(self.boss.health)}"
+
+                core_label = self.small_font.render(objective_text_str, True, WHITE)
                 self.virtual_screen.blit(core_label, (mm_x, mm_y + mm_h + 8))
 
-            # Screen-edge Radar for off-screen cores
-            if self.state == 'PLAYING' and self.materials:
+            # Screen-edge Radar for off-screen cores / power cells
+            if self.state == 'PLAYING':
                 player_pos = pygame.math.Vector2(self.player.x + self.player.width // 2, self.player.y + self.player.height // 2)
                 closest_core = None
                 min_dist = float('inf')
-                for mat in self.materials:
+                
+                targets_list = []
+                if self.materials:
+                    targets_list = self.materials
+                elif self.current_zone == 'PLASMA' and self.energy_cells:
+                    targets_list = self.energy_cells
+                    
+                for mat in targets_list:
                     core_pos = pygame.math.Vector2(mat.x, mat.y)
                     dist = player_pos.distance_to(core_pos)
                     if dist < min_dist:
@@ -6430,7 +8260,6 @@ class Game:
                     warning_lbl = warning_font.render("WARNING: REACTOR MELTDOWN!", True, (255, 69, 0))
                     
                     evac_lbl = warning_font.render("ESCAPE THE COLLAPSE TO THE PORTAL!", True, (255, 255, 255))
-                    arrow_color = GREEN
                     
                 else:
                     warning_lbl = warning_font.render("WARNING: SECTOR DE-STABILIZING", True, (255, 69, 0))
@@ -6561,9 +8390,58 @@ class Game:
                 
                 special_label = self.small_font.render(f"{special_name}:", True, WHITE if special_ratio == 1.0 else (160, 160, 160))
                 self.virtual_screen.blit(special_label, (panel_x + 15, special_y - 4))
+                
+                if self.current_zone == 'TUTORIAL':
+                    # Draw beautiful semi-transparent guide card at the bottom
+                    panel_rect = pygame.Rect(VIRTUAL_WIDTH // 2 - 350, VIRTUAL_HEIGHT - 170, 700, 140)
+                    pygame.draw.rect(self.virtual_screen, (15, 25, 30, 230), panel_rect, border_radius=10)
+                    pygame.draw.rect(self.virtual_screen, GREEN, panel_rect, width=2, border_radius=10)
+                    
+                    # Title
+                    slide = self.tutorial_dialogues[self.tutorial_stage]
+                    title_surf = self.font.render(slide["title"], True, GREEN)
+                    self.virtual_screen.blit(title_surf, (panel_rect.x + 20, panel_rect.y + 12))
+                    
+                    # Text wrapping helper
+                    words = slide["text"].split(" ")
+                    lines = []
+                    current_line = ""
+                    for word in words:
+                        test_line = current_line + " " + word if current_line else word
+                        test_surf = self.small_font.render(test_line, True, WHITE)
+                        if test_surf.get_width() < 660:
+                            current_line = test_line
+                        else:
+                            lines.append(current_line)
+                            current_line = word
+                    if current_line:
+                        lines.append(current_line)
+                        
+                    for idx, line in enumerate(lines[:3]):
+                        line_surf = self.small_font.render(line, True, WHITE)
+                        self.virtual_screen.blit(line_surf, (panel_rect.x + 20, panel_rect.y + 42 + idx * 20))
+                        
+                    # Dialogue Buttons
+                    vmx, vmy = self._get_virtual_mouse_pos()
+                    if self.tutorial_stage > 0:
+                        prev_rect = pygame.Rect(panel_rect.x + 460, panel_rect.y + 100, 100, 30)
+                        prev_hover = prev_rect.collidepoint(vmx, vmy)
+                        prev_color = (0, 150, 80) if prev_hover else (0, 80, 40)
+                        pygame.draw.rect(self.virtual_screen, prev_color, prev_rect, border_radius=5)
+                        pygame.draw.rect(self.virtual_screen, GREEN, prev_rect, width=1, border_radius=5)
+                        prev_lbl = self.small_font.render("BACK", True, WHITE)
+                        self.virtual_screen.blit(prev_lbl, (prev_rect.x + prev_rect.width // 2 - prev_lbl.get_width() // 2, prev_rect.y + 6))
+                        
+                    action_rect = pygame.Rect(panel_rect.x + 575, panel_rect.y + 100, 110, 30)
+                    action_hover = action_rect.collidepoint(vmx, vmy)
+                    action_color = (0, 180, 100) if action_hover else (0, 110, 50)
+                    pygame.draw.rect(self.virtual_screen, action_color, action_rect, border_radius=5)
+                    pygame.draw.rect(self.virtual_screen, GREEN, action_rect, width=1, border_radius=5)
+                    action_lbl = self.small_font.render(slide["action"], True, WHITE)
+                    self.virtual_screen.blit(action_lbl, (action_rect.x + action_rect.width // 2 - action_lbl.get_width() // 2, action_rect.y + 6))
 
             # Boss approaching warning overlay
-            if self.boss and getattr(self.boss, 'appearance_timer', 0) > 0 and not self.boss.is_dead:
+            if self.boss and self.boss.zone != 'SINGULARITY' and getattr(self.boss, 'appearance_timer', 0) > 0 and not self.boss.is_dead:
                 banner_y = VIRTUAL_HEIGHT // 2 - 80
                 banner_surf = pygame.Surface((VIRTUAL_WIDTH, 140), pygame.SRCALPHA)
                 ticks = pygame.time.get_ticks()
@@ -6610,263 +8488,36 @@ class Game:
         # Swap back to UI layer for overlays
         self.virtual_screen = self.ui_surface
 
-        # Intro Overlay
-        if self.state == 'INTRO':
+        # Transition handling
+        if getattr(self, 'transition_state', None) == 'INTRO_TO_MAIN_MENU':
+            current_time = pygame.time.get_ticks()
+            elapsed = current_time - self.transition_start_time
+            progress = min(1.0, elapsed / float(self.transition_duration))
+            # Smooth Ease-in-out transition curve
+            t = progress * progress * (3.0 - 2.0 * progress)
+            
+            # Temporary surfaces to render states separately
+            intro_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+            menu_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+            
+            intro_time = current_time - getattr(self, 'intro_start_time', 0)
+            self.draw_intro_overlay(intro_surf, intro_time, ticks)
+            self.draw_main_menu_overlay(menu_surf, ticks, draw_state='MAIN_MENU')
+            
+            # Fade out intro
+            intro_surf.set_alpha(int((1.0 - t) * 255))
+            # Fade in menu
+            menu_surf.set_alpha(int(t * 255))
+            
+            self.virtual_screen.blit(intro_surf, (0, 0))
+            self.virtual_screen.blit(menu_surf, (0, 0))
+            
+        elif self.state == 'INTRO':
             intro_time = pygame.time.get_ticks() - getattr(self, 'intro_start_time', 0)
-            self.virtual_screen.fill((5, 5, 8))
-            
-            # Phase 1: Boot sequence text
-            if intro_time < 2000:
-                lines = [
-                    "BOOTING SYSTEM KERNEL...",
-                    "MOUNTING VIRTUAL DRIVES... OK",
-                    "INITIALIZING NEURAL LINK... OK",
-                    "ESTABLISHING CONNECTION TO ZENITH NETWORK..."
-                ]
-                y_offset = 100
-                for i, line in enumerate(lines):
-                    if intro_time > i * 400:
-                        text_surf = self.small_font.render(line, True, CYAN)
-                        self.virtual_screen.blit(text_surf, (50, y_offset + i * 30))
-            
-            # Phase 2: Logo Reveal & Grid fade in
-            if intro_time >= 1500:
-                reveal_time = intro_time - 1500
-                alpha = min(255, int((reveal_time / 2000.0) * 255))
-                
-                # Draw grid
-                grid_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                grid_spacing = 40
-                for gx_line in range(0, VIRTUAL_WIDTH, grid_spacing):
-                    pygame.draw.line(grid_surf, (0, 255, 255, 10), (gx_line, 0), (gx_line, VIRTUAL_HEIGHT))
-                for gy_line in range(0, VIRTUAL_HEIGHT, grid_spacing):
-                    pygame.draw.line(grid_surf, (0, 255, 255, 10), (0, gy_line), (VIRTUAL_WIDTH, gy_line))
-                grid_surf.set_alpha(alpha)
-                self.virtual_screen.blit(grid_surf, (0, 0))
-                
-                # Title
-                title = self.large_font.render("ZENITH", True, CYAN)
-                title_surf = pygame.Surface(title.get_size(), pygame.SRCALPHA)
-                title_surf.blit(title, (0, 0))
-                title_surf.set_alpha(alpha)
-                
-                # Glow behind title
-                glow = pygame.Surface((title.get_width() + 100, title.get_height() + 100), pygame.SRCALPHA)
-                pygame.draw.circle(glow, (0, 255, 255, alpha // 4), (glow.get_width()//2, glow.get_height()//2), 100)
-                
-                cx, cy = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
-                self.virtual_screen.blit(glow, (cx - glow.get_width()//2, cy - glow.get_height()//2 - 50))
-                self.virtual_screen.blit(title_surf, (cx - title.get_width()//2, cy - title.get_height()//2 - 50))
-                
-                # Loading Bar
-                if reveal_time > 1000:
-                    bar_w = 400
-                    bar_h = 4
-                    bar_x = cx - bar_w // 2
-                    bar_y = cy + 50
-                    progress = min(1.0, (reveal_time - 1000) / 1500.0)
-                    pygame.draw.rect(self.virtual_screen, (50, 50, 50), (bar_x, bar_y, bar_w, bar_h))
-                    pygame.draw.rect(self.virtual_screen, CYAN, (bar_x, bar_y, int(bar_w * progress), bar_h))
-                    
-                    if progress >= 1.0:
-                        ready_text = self.small_font.render("SYSTEM READY", True, WHITE)
-                        ready_text.set_alpha(int(128 + 127 * math.sin(pygame.time.get_ticks() * 0.01)))
-                        self.virtual_screen.blit(ready_text, (cx - ready_text.get_width()//2, bar_y + 20))
+            self.draw_intro_overlay(self.virtual_screen, intro_time, ticks)
 
-        # Main Menu overlay
-        # Main Menu overlay
-        if self.state in ('MAIN_MENU', 'CLASS_SELECT'):
-            # Draw background stars (same for both)
-            for star in self.stars:
-                val = math.sin(pygame.time.get_ticks() * star[5] + star[6])
-                alpha = int(128 + 127 * val)
-                color = tuple(max(0, min(255, int(c * (alpha / 255.0)))) for c in star[4])
-                pygame.draw.circle(self.virtual_screen, color, (int(star[0]), int(star[1])), star[3])
-
-            # Nebula Background Effect: Layered transparent blobs
-            nebula_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-            ticks = pygame.time.get_ticks()
-            clouds = [
-                (PURPLE, 300, 300, 0.0002),
-                (INDIGO, 900, 600, -0.00015),
-                (MAGENTA, 200, 700, 0.0003),
-                (BLUE, 1000, 200, -0.00025)
-            ]
-            for col, bx, by, speed in clouds:
-                nx = bx + math.sin(ticks * speed) * 80
-                ny = by + math.cos(ticks * speed * 0.7) * 80
-                base_r = 220 + math.sin(ticks * 0.0004) * 30
-                for layer in range(5):
-                    alpha = int(22 / (layer + 1))
-                    lr = int(base_r * (1.0 + layer * 0.3))
-                    pygame.draw.circle(nebula_surf, (*col, alpha), (int(nx), int(ny)), lr)
-            self.virtual_screen.blit(nebula_surf, (0, 0))
-
-            grid_spacing = 40
-            grid_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-            for gx_line in range(0, VIRTUAL_WIDTH, grid_spacing):
-                pygame.draw.line(grid_surf, (0, 255, 255, 15), (gx_line, 0), (gx_line, VIRTUAL_HEIGHT))
-            for gy_line in range(0, VIRTUAL_HEIGHT, grid_spacing):
-                pygame.draw.line(grid_surf, (0, 255, 255, 15), (0, gy_line), (VIRTUAL_WIDTH, gy_line))
-            scan_y = (pygame.time.get_ticks() // 4) % VIRTUAL_HEIGHT
-            pygame.draw.line(grid_surf, (0, 255, 255, 35), (0, scan_y), (VIRTUAL_WIDTH, scan_y), width=2)
-            self.virtual_screen.blit(grid_surf, (0, 0))
-            
-            border_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-            pygame.draw.rect(border_surf, (0, 255, 255, 60), (10, 10, VIRTUAL_WIDTH - 20, VIRTUAL_HEIGHT - 20), width=2, border_radius=12)
-            pygame.draw.rect(border_surf, (0, 255, 255, 25), (15, 15, VIRTUAL_WIDTH - 30, VIRTUAL_HEIGHT - 30), width=1, border_radius=10)
-            self.virtual_screen.blit(border_surf, (0, 0))
-
-            if self.state == 'MAIN_MENU':
-                pulse = math.sin(pygame.time.get_ticks() * 0.005)
-                title_shadow = self.large_font.render("ZENITH", True, (0, 30, 40))
-                self.virtual_screen.blit(title_shadow, title_shadow.get_rect(center=(VIRTUAL_WIDTH // 2 + 4, VIRTUAL_HEIGHT // 2 - 198)))
-                
-                title_color = (int(128 + 127 * pulse), 255, 255)
-                title = self.large_font.render("ZENITH", True, title_color)
-                title_rect = title.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 - 200))
-                self.virtual_screen.blit(title, title_rect)
-                
-                # Input Callsign Box
-                input_prompt = self.font.render("ENTER PILOT CALLSIGN:", True, WHITE)
-                input_box_rect = pygame.Rect(VIRTUAL_WIDTH // 2 - 200, 350, 400, 50)
-                pygame.draw.rect(self.virtual_screen, DARK_GRAY, input_box_rect, border_radius=5)
-                
-                border_color = CYAN if self.input_active else SLATE_GRAY
-                if self.input_active and pygame.time.get_ticks() % 1000 < 500:
-                    border_color = WHITE
-                pygame.draw.rect(self.virtual_screen, border_color, input_box_rect, width=2, border_radius=5)
-                
-                self.virtual_screen.blit(input_prompt, (VIRTUAL_WIDTH // 2 - input_prompt.get_width() // 2, 300))
-                
-                name_text = self.player_name + ("|" if self.input_active and pygame.time.get_ticks() % 1000 < 500 else "")
-                name_surf = self.font.render(name_text, True, YELLOW)
-                name_rect = name_surf.get_rect(center=input_box_rect.center)
-                self.virtual_screen.blit(name_surf, name_rect)
-                
-                # Continue button
-                continue_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 100, 430, 200, 50)
-                mx, my = pygame.mouse.get_pos()
-                vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
-                vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
-                btn_color = CYAN if continue_btn.collidepoint(vmx, vmy) else BLUE
-                pygame.draw.rect(self.virtual_screen, btn_color, continue_btn, border_radius=8)
-                pygame.draw.rect(self.virtual_screen, WHITE, continue_btn, width=1, border_radius=8)
-                btn_lbl = self.font.render("CONTINUE", True, BLACK if btn_color == CYAN else WHITE)
-                self.virtual_screen.blit(btn_lbl, (continue_btn.centerx - btn_lbl.get_width() // 2, continue_btn.centery - btn_lbl.get_height() // 2))
-
-                # Controls Box
-                controls_box = pygame.Rect(VIRTUAL_WIDTH // 2 - 260, 500, 520, 360)
-                box_surf = pygame.Surface((controls_box.width, controls_box.height), pygame.SRCALPHA)
-                box_surf.fill((5, 5, 8, 120))
-                pygame.draw.rect(box_surf, (0, 255, 255, 120), (0, 0, controls_box.width, controls_box.height), width=1)
-                self.virtual_screen.blit(box_surf, (controls_box.x, controls_box.y))
-                
-                controls_title = self.font.render("CONTROLS & HOW TO PLAY:", True, CYAN)
-                self.virtual_screen.blit(controls_title, (controls_box.x + 20, controls_box.y + 15))
-                
-                controls = [
-                    "W/S (or UP/DOWN)   : Thrust Forward / Reverse",
-                    "A/D (or L/R keys)  : Evade Dash (on Cooldown)",
-                    "LEFT SHIFT         : Drop Anti-Missile Flare",
-                    "MOUSE MOVEMENT     : Aim / Rotate Ship",
-                    "LEFT MOUSE CLICK   : Shoot Primary Weapon",
-                    "RIGHT MOUSE CLICK  : Heavy Torpedo (In Combat)",
-                    "GOAL: Fly UP, Collect 5 Cores & Warp Out",
-                    "P / ESCAPE KEY     : Open Upgrades at Space Station",
-                    "Q / E              : Use Class Abilities"
-                ]
-                for idx, text in enumerate(controls):
-                    ctrl_txt = self.small_font.render(text, True, (220, 240, 255))
-                    self.virtual_screen.blit(ctrl_txt, (controls_box.x + 20, controls_box.y + 50 + idx * 30))
-
-            elif self.state == 'CLASS_SELECT':
-                mx, my = pygame.mouse.get_pos()
-                vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
-                vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
-
-                sel_lbl = self.large_font.render("SELECT SHIP CLASS", True, CYAN)
-                self.virtual_screen.blit(sel_lbl, (VIRTUAL_WIDTH // 2 - sel_lbl.get_width() // 2, 70))
-                
-                pilot_lbl = self.font.render(f"PILOT CALLSIGN: {self.player_name.upper()}", True, YELLOW)
-                self.virtual_screen.blit(pilot_lbl, (VIRTUAL_WIDTH // 2 - pilot_lbl.get_width() // 2, 150))
-                
-                classes = ['RANGER', 'ENGINEER', 'VANGUARD', 'SNIPER', 'ASSASSIN']
-                for idx, cls in enumerate(classes):
-                    btn_rect = pygame.Rect(100 + idx * 200, 220, 180, 50)
-                    is_hover = btn_rect.collidepoint(vmx, vmy)
-                    is_active = self.selected_class == cls
-                    
-                    bg_col = (40, 40, 45)
-                    if is_active:
-                        bg_col = CYAN
-                    elif is_hover:
-                        bg_col = (80, 80, 85)
-                        
-                    pygame.draw.rect(self.virtual_screen, bg_col, btn_rect, border_radius=6)
-                    pygame.draw.rect(self.virtual_screen, WHITE if is_active else SLATE_GRAY, btn_rect, width=1, border_radius=6)
-                    
-                    lbl_col = BLACK if is_active else WHITE
-                    lbl = self.font.render(cls, True, lbl_col)
-                    self.virtual_screen.blit(lbl, (btn_rect.centerx - lbl.get_width() // 2, btn_rect.centery - lbl.get_height() // 2))
-
-                # Ship Preview Box
-                prev_box = pygame.Rect(100, 310, 400, 400)
-                pygame.draw.rect(self.virtual_screen, (10, 10, 15, 180), prev_box, border_radius=8)
-                pygame.draw.rect(self.virtual_screen, CYAN, prev_box, width=1, border_radius=8)
-                
-                prev_title = self.font.render("VESSEL HULL PREVIEW", True, CYAN)
-                self.virtual_screen.blit(prev_title, (prev_box.centerx - prev_title.get_width() // 2, prev_box.y + 15))
-                
-                self.player.x = prev_box.centerx - self.player.width // 2
-                self.player.y = prev_box.centery - self.player.height // 2
-                self.player.draw(self.virtual_screen, camera_y=0)
-
-                # Class Description Box
-                desc_box = pygame.Rect(520, 310, 580, 400)
-                pygame.draw.rect(self.virtual_screen, (10, 10, 15, 180), desc_box, border_radius=8)
-                pygame.draw.rect(self.virtual_screen, CYAN, desc_box, width=1, border_radius=8)
-                
-                desc_title = self.font.render(f"CLASS SPECIFICATION: {self.selected_class}", True, YELLOW)
-                self.virtual_screen.blit(desc_title, (desc_box.x + 20, desc_box.y + 15))
-                
-                class_desc = {
-                    'RANGER': "Patrol and intercept class. Balanced stats and versatile loadout. Employs special maneuver thrusters that reduce evade dash cooldown.",
-                    'ENGINEER': "Tactical support vessel. Slow shield automatic regeneration capability. Deploys custom auxiliary repair drones and defense nodes.",
-                    'VANGUARD': "Heavy armor cruiser. Maximum plating integrity and deflection shields. Built for ramming attacks and bullet absorption.",
-                    'SNIPER': "Long-range bombardment asset. Possesses high-energy piercing weapons. Fires high-damage precision railgun bolts.",
-                    'ASSASSIN': "Infiltration model. Deploys a cloaking drive that makes the ship temporarily invisible and invulnerable, ideal for sneak attacks."
-                }
-                
-                desc_text = class_desc.get(self.selected_class, "")
-                words = desc_text.split(' ')
-                lines = []
-                curr_line = ""
-                for w in words:
-                    test_line = curr_line + " " + w if curr_line else w
-                    if self.font.size(test_line)[0] < desc_box.width - 40:
-                        curr_line = test_line
-                    else:
-                        lines.append(curr_line)
-                        curr_line = w
-                if curr_line:
-                    lines.append(curr_line)
-                    
-                for idx, line in enumerate(lines):
-                    line_surf = self.font.render(line, True, (220, 230, 245))
-                    self.virtual_screen.blit(line_surf, (desc_box.x + 20, desc_box.y + 60 + idx * 30))
-
-                # Launch Button
-                launch_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 150, 740, 300, 60)
-                pulse_amt = math.sin(pygame.time.get_ticks() * 0.01)
-                launch_color = (0, 200 + int(55 * pulse_amt), 200 + int(55 * pulse_amt))
-                if launch_btn.collidepoint(vmx, vmy):
-                    launch_color = GREEN
-                pygame.draw.rect(self.virtual_screen, launch_color, launch_btn, border_radius=8)
-                pygame.draw.rect(self.virtual_screen, WHITE, launch_btn, width=1, border_radius=8)
-                
-                launch_lbl = self.font.render("LAUNCH MISSION", True, BLACK if launch_color == GREEN else WHITE)
-                self.virtual_screen.blit(launch_lbl, (launch_btn.centerx - launch_lbl.get_width() // 2, launch_btn.centery - launch_lbl.get_height() // 2))
+        elif self.state in ('MAIN_MENU', 'CLASS_SELECT'):
+            self.draw_main_menu_overlay(self.virtual_screen, ticks)
 
         # Pause Menu with Ship Upgrades Shop
         elif self.state == 'PAUSED':
@@ -6895,7 +8546,7 @@ class Game:
             self.virtual_screen.blit(title, (100, 250))
             
             # Class / Weapon Loadout Selector
-            if self.current_zone == 'HUB' and self.hub_station_active:
+            if self.current_zone == 'HUB' and self.hub_station_active and self.hub_station_active not in ('WEAPONRY', 'ENGINEERING'):
                 loadout_lbl = self.font.render("ACTIVE STATION LOADOUT:", True, CYAN)
                 self.virtual_screen.blit(loadout_lbl, (100, 470))
 
@@ -6927,11 +8578,9 @@ class Game:
                 quit_y = 410
                 
             resume = self.font.render("Press ESC or P to Resume", True, WHITE)
-            self.virtual_screen.blit(resume, (100, 350))
             self.virtual_screen.blit(resume, (100, resume_y))
             
             quit_lbl = self.font.render("Press M to Quit to Main Menu", True, RED)
-            self.virtual_screen.blit(quit_lbl, (100, 410))
             self.virtual_screen.blit(quit_lbl, (100, quit_y))
             
             pygame.draw.line(self.virtual_screen, SLATE_GRAY, (600, 150), (600, 800), 2)
@@ -6964,9 +8613,9 @@ class Game:
                     ('Bomb Refill', 150, f"Full ammo reload. Current: {self.player.bomb_ammo}"),
                     ('Missile Refill', 200, f"Full ammo reload. Current: {self.player.missile_ammo}"),
                     ('Flare Refill', 50, f"Full ammo reload. Current: {self.player.flare_ammo}"),
-                    ('Mod: Piercing Rounds', 300, f"Lasers pierce through 1 target. (Mod Slot)"),
-                    ('Mod: Split Shot', 400, f"Fires 2 extra diagonal side lasers. (Mod Slot)"),
-                    ('Mod: Shield Siphon', 350, f"Siphons 0.05 shield points on laser hit. (Mod Slot)")
+                    ('Mod: Piercing Rounds', 300, "Lasers pierce through 1 target. (Mod Slot)"),
+                    ('Mod: Split Shot', 400, "Fires 2 extra diagonal side lasers. (Mod Slot)"),
+                    ('Mod: Shield Siphon', 350, "Siphons 0.05 shield points on laser hit. (Mod Slot)")
                 ]
                 for i, (name, cost, desc) in enumerate(items):
                     rect = pygame.Rect(650, 210 + i * 80, 480, 68)
@@ -6985,289 +8634,623 @@ class Game:
                         cost_lbl = self.font.render(f"{cost} C", True, GREEN if self.player.credits >= cost else RED)
                     self.virtual_screen.blit(cost_lbl, (rect.right - cost_lbl.get_width() - 15, rect.y + 15))
             else:
-                tree_title = self.large_font.render(f"{self.hub_station_active}", True, CYAN)
-                self.virtual_screen.blit(tree_title, (650, 100))
-                
-                sp_text1 = self.font.render(f"Your Wallet: {self.player.credits} Credits", True, GREEN)
-                self.virtual_screen.blit(sp_text1, (650, 175))
-                sp_text2 = self.font.render(f"  |  {self.player.scraps} Scrap", True, GOLD)
-                self.virtual_screen.blit(sp_text2, (650 + sp_text1.get_width(), 175))
-                
-                # Define Tech Tree nodes
-                nodes_info = {
-                    'shield': {
-                        'name': 'Shield Generator',
-                        'desc': 'Upgrade hull capacitors to absorb more energy (+1 Max Shield per rank).',
-                        'col': 1, 'row': 1, 'max_level': 4, 'deps': [], 'type': 'ENGINEERING',
-                        'cost': (self.player.skills['shield'] + 1) * 75,
-                        'scrap_cost': (self.player.skills['shield'] + 1) * 1
-                    },
-                    'deflector': {
-                        'name': 'Deflector Shield',
-                        'desc': 'Unlock a passive shield deflector that reduces shield recharge delay from 5s to 3s.',
-                        'col': 1, 'row': 2, 'max_level': 1, 'deps': [('shield', 2)], 'type': 'ENGINEERING',
-                        'cost': 200, 'scrap_cost': 3
-                    },
-                    'coolant': {
-                        'name': 'Thermal Coolant',
-                        'desc': 'Install cryogenic liquid heatsinks (+25% faster weapon cool-down rate per rank).',
-                        'col': 2, 'row': 1, 'max_level': 4, 'deps': [], 'type': 'ENGINEERING',
-                        'cost': (self.player.skills['coolant'] + 1) * 60,
-                        'scrap_cost': (self.player.skills['coolant'] + 1) * 1
-                    },
-                    'hyperdrive': {
-                        'name': 'Hyperdrive Core',
-                        'desc': 'Assemble hyper-dense tachyonic fields to speed up warp charging (reduces warp delay from 3s to 1s).',
-                        'col': 2, 'row': 2, 'max_level': 1, 'deps': [('shield', 2), ('coolant', 2)], 'type': 'ENGINEERING',
-                        'cost': 350, 'scrap_cost': 6
-                    },
-                    'class_tier1': {
-                        'name': self.player.class_upgrades.get('tier1_name', 'Class Upgrade I'),
-                        'desc': self.player.class_upgrades.get('tier1_desc', 'Upgrade class-specific traits.'),
-                        'col': 3, 'row': 1, 'max_level': 3, 'deps': [], 'type': 'ENGINEERING',
-                        'cost': (self.player.skills['class_tier1'] + 1) * 120,
-                        'scrap_cost': (self.player.skills['class_tier1'] + 1) * 2
-                    },
-                    'class_tier2': {
-                        'name': self.player.class_upgrades.get('tier2_name', 'Class Upgrade II'),
-                        'desc': self.player.class_upgrades.get('tier2_desc', 'Upgrade class-specific traits.'),
-                        'col': 3, 'row': 2, 'max_level': 2, 'deps': [('class_tier1', 1)], 'type': 'ENGINEERING',
-                        'cost': (self.player.skills['class_tier2'] + 1) * 180,
-                        'scrap_cost': (self.player.skills['class_tier2'] + 1) * 3
-                    },
-                    'class_tier3': {
-                        'name': self.player.class_upgrades.get('tier3_name', 'Class Upgrade III'),
-                        'desc': self.player.class_upgrades.get('tier3_desc', 'Upgrade class-specific traits.'),
-                        'col': 3, 'row': 3, 'max_level': 1, 'deps': [('class_tier2', 1)], 'type': 'ENGINEERING',
-                        'cost': 350,
-                        'scrap_cost': 5
-                    },
-                    'weapon': {
-                        'name': 'Laser Multi-Cannon',
-                        'desc': 'Upgrade the base Laser Cannon to unlock dual fire mode.',
-                        'col': 1, 'row': 1, 'max_level': 1, 'deps': [], 'type': 'WEAPONRY',
-                        'cost': 200,
-                        'scrap_cost': 4
-                    },
-                    'overcharge': {
-                        'name': 'Laser Overcharger',
-                        'desc': 'Overclock the Laser fire rate (reduces standard shoot delay by 30%).',
-                        'col': 1, 'row': 2, 'max_level': 1, 'deps': [('weapon', 1)], 'type': 'WEAPONRY',
-                        'cost': 250, 'scrap_cost': 4
-                    },
-                    'shotgun_unlocked': {
-                        'name': 'Buy Shotgun',
-                        'desc': 'Unlock the high-impact CQC Scatter Shotgun primary weapon.',
-                        'col': 1, 'row': 3, 'max_level': 1, 'deps': [], 'type': 'WEAPONRY',
-                        'cost': 300, 'scrap_cost': 5
-                    },
-                    'shotgun_mod': {
-                        'name': 'Shotgun Tuning',
-                        'desc': 'Improve shotgun heatsinks and shell damage (+15% stats per rank).',
-                        'col': 1, 'row': 4, 'max_level': 3, 'deps': [('shotgun_unlocked', 1)], 'type': 'WEAPONRY',
-                        'cost': (self.player.skills['shotgun_mod'] + 1) * 100, 'scrap_cost': (self.player.skills['shotgun_mod'] + 1) * 2
-                    },
-                    'railgun_unlocked': {
-                        'name': 'Buy Railgun',
-                        'desc': 'Unlock the long-range piercing Tachyonic Railgun primary weapon.',
-                        'col': 2, 'row': 1, 'max_level': 1, 'deps': [], 'type': 'WEAPONRY',
-                        'cost': 500, 'scrap_cost': 10
-                    },
-                    'railgun_mod': {
-                        'name': 'Railgun Tuning',
-                        'desc': 'Reduce the Railgun charge delay and increase projectile velocity.',
-                        'col': 2, 'row': 2, 'max_level': 3, 'deps': [('railgun_unlocked', 1)], 'type': 'WEAPONRY',
-                        'cost': (self.player.skills['railgun_mod'] + 1) * 150, 'scrap_cost': (self.player.skills['railgun_mod'] + 1) * 4
-                    },
-                    'torpedo': {
-                        'name': 'Fusion Torpedo',
-                        'desc': 'Upgrade heavy torpedo systems (-15% cooldown and +15% explosion size per rank).',
-                        'col': 2, 'row': 3, 'max_level': 4, 'deps': [], 'type': 'WEAPONRY',
-                        'cost': (self.player.skills['torpedo'] + 1) * 80,
-                        'scrap_cost': (self.player.skills['torpedo'] + 1) * 1
-                    },
-                    'cluster_torpedo': {
-                        'name': 'Cluster Warhead',
-                        'desc': 'Modify torpedo shell casings to trigger 3 smaller secondary sub-explosions upon detonation.',
-                        'col': 2, 'row': 4, 'max_level': 1, 'deps': [('torpedo', 2)], 'type': 'WEAPONRY',
-                        'cost': 300, 'scrap_cost': 5
-                    },
-                    'bomb_unlocked': {
-                        'name': 'Buy Proxy Bomb',
-                        'desc': 'Unlock the Proximity-fused Detonation Bomb secondary weapon.',
-                        'col': 3, 'row': 1, 'max_level': 1, 'deps': [], 'type': 'WEAPONRY',
-                        'cost': 200, 'scrap_cost': 3
-                    },
-                    'bomb_cap': {
-                        'name': 'Bomb Payload',
-                        'desc': 'Increase Bomb max capacity and explosion radius per rank.',
-                        'col': 3, 'row': 2, 'max_level': 3, 'deps': [('bomb_unlocked', 1)], 'type': 'WEAPONRY',
-                        'cost': (self.player.skills['bomb_cap'] + 1) * 80, 'scrap_cost': (self.player.skills['bomb_cap'] + 1) * 2
-                    },
-                    'missile_unlocked': {
-                        'name': 'Buy Homing Missile',
-                        'desc': 'Unlock the Smart-Targeting Homing Missile secondary weapon.',
-                        'col': 3, 'row': 3, 'max_level': 1, 'deps': [], 'type': 'WEAPONRY',
-                        'cost': 400, 'scrap_cost': 7
-                    },
-                    'missile_cap': {
-                        'name': 'Missile Payload',
-                        'desc': 'Increase Missile max capacity and flight speed per rank.',
-                        'col': 3, 'row': 4, 'max_level': 3, 'deps': [('missile_unlocked', 1)], 'type': 'WEAPONRY',
-                        'cost': (self.player.skills['missile_cap'] + 1) * 120, 'scrap_cost': (self.player.skills['missile_cap'] + 1) * 3
-                    }
+                # ─── DRAG & DROP SHOP ────────────────────────────────────────
+                # Shared parts catalogue used by both ENGINEERING and WEAPONRY
+                all_parts = {
+                    # --- ENGINEERING / SHIELD slot ---
+                    'shield':           {'name': 'Shield Gen',    'slot': 'SHIELD',  'type': 'ENGINEERING', 'max_level': 4,
+                                         'icon_color': (0, 180, 255),
+                                         'desc': '+1 Max Shield per rank (up to 4 ranks).',
+                                         'cost_func': lambda p: (p.skills['shield'] + 1) * 75,
+                                         'scrap_func': lambda p: (p.skills['shield'] + 1) * 1,   'deps': []},
+                    'deflector':        {'name': 'Deflector',     'slot': 'SHIELD',  'type': 'ENGINEERING', 'max_level': 1,
+                                         'icon_color': (0, 140, 220),
+                                         'desc': 'Cuts shield recharge delay from 5 s → 3 s.',
+                                         'cost_func': lambda p: 200,
+                                         'scrap_func': lambda p: 3,                              'deps': [('shield', 2)]},
+                    'emergency_recharge':{'name': 'E-Recharge',   'slot': 'SHIELD',  'type': 'ENGINEERING', 'max_level': 2,
+                                         'icon_color': (60, 210, 255),
+                                         'desc': 'Restores 50 % of max shield once on depletion.',
+                                         'cost_func': lambda p: (p.skills['emergency_recharge'] + 1) * 150,
+                                         'scrap_func': lambda p: (p.skills['emergency_recharge'] + 1) * 3, 'deps': [('shield', 2)]},
+                    # --- ENGINEERING / CORE slot ---
+                    'coolant':          {'name': 'Coolant',       'slot': 'CORE',    'type': 'ENGINEERING', 'max_level': 4,
+                                         'icon_color': (0, 255, 200),
+                                         'desc': '+25 % weapon cool-down rate per rank.',
+                                         'cost_func': lambda p: (p.skills['coolant'] + 1) * 60,
+                                         'scrap_func': lambda p: (p.skills['coolant'] + 1) * 1, 'deps': []},
+                    'nanite_repair':    {'name': 'Nanite Rep',    'slot': 'CORE',    'type': 'ENGINEERING', 'max_level': 3,
+                                         'icon_color': (0, 255, 150),
+                                         'desc': '+0.003 passive shield regen per frame per rank.',
+                                         'cost_func': lambda p: (p.skills['nanite_repair'] + 1) * 120,
+                                         'scrap_func': lambda p: (p.skills['nanite_repair'] + 1) * 2, 'deps': [('coolant', 1)]},
+                    'class_tier1':      {'name': self.player.class_upgrades.get('tier1_name', 'Class Upgrade I'),
+                                         'slot': 'CORE',    'type': 'ENGINEERING', 'max_level': 3,
+                                         'icon_color': (180, 100, 255),
+                                         'desc': self.player.class_upgrades.get('tier1_desc', 'Class trait upgrade.'),
+                                         'cost_func': lambda p: (p.skills['class_tier1'] + 1) * 120,
+                                         'scrap_func': lambda p: (p.skills['class_tier1'] + 1) * 2, 'deps': []},
+                    'class_tier2':      {'name': self.player.class_upgrades.get('tier2_name', 'Class Upgrade II'),
+                                         'slot': 'CORE',    'type': 'ENGINEERING', 'max_level': 2,
+                                         'icon_color': (200, 120, 255),
+                                         'desc': self.player.class_upgrades.get('tier2_desc', 'Advanced class trait.'),
+                                         'cost_func': lambda p: (p.skills['class_tier2'] + 1) * 180,
+                                         'scrap_func': lambda p: (p.skills['class_tier2'] + 1) * 3, 'deps': [('class_tier1', 1)]},
+                    'class_tier3':      {'name': self.player.class_upgrades.get('tier3_name', 'Class Upgrade III'),
+                                         'slot': 'CORE',    'type': 'ENGINEERING', 'max_level': 1,
+                                         'icon_color': (230, 150, 255),
+                                         'desc': self.player.class_upgrades.get('tier3_desc', 'Elite class specialisation.'),
+                                         'cost_func': lambda p: 350,
+                                         'scrap_func': lambda p: 5, 'deps': [('class_tier2', 1)]},
+                    # --- ENGINEERING / ENGINE slot ---
+                    'hyperdrive':       {'name': 'Hyperdrive',    'slot': 'ENGINE',  'type': 'ENGINEERING', 'max_level': 1,
+                                         'icon_color': (255, 200, 0),
+                                         'desc': 'Reduces warp charge delay 3 s → 1 s.',
+                                         'cost_func': lambda p: 350,
+                                         'scrap_func': lambda p: 6, 'deps': [('shield', 2), ('coolant', 2)]},
+                    'afterburner':      {'name': 'Afterburner',   'slot': 'ENGINE',  'type': 'ENGINEERING', 'max_level': 3,
+                                         'icon_color': (255, 140, 0),
+                                         'desc': '+20 % dash burst speed per rank.',
+                                         'cost_func': lambda p: (p.skills['afterburner'] + 1) * 100,
+                                         'scrap_func': lambda p: (p.skills['afterburner'] + 1) * 2, 'deps': []},
+                    'vector_nozzle':    {'name': 'Vector Nozzle', 'slot': 'ENGINE',  'type': 'ENGINEERING', 'max_level': 3,
+                                         'icon_color': (255, 170, 50),
+                                         'desc': '+20 % turn rate per rank.',
+                                         'cost_func': lambda p: (p.skills['vector_nozzle'] + 1) * 80,
+                                         'scrap_func': lambda p: (p.skills['vector_nozzle'] + 1) * 2, 'deps': []},
+                    # --- WEAPONRY / WEAPON slot ---
+                    'weapon':           {'name': 'Multi-Cannon',  'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                         'icon_color': (255, 80, 80),
+                                         'desc': 'Unlocks dual Laser fire mode.',
+                                         'cost_func': lambda p: 200,
+                                         'scrap_func': lambda p: 4, 'deps': []},
+                    'overcharge':       {'name': 'Overcharger',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                         'icon_color': (255, 50, 50),
+                                         'desc': 'Laser fire-rate -30 % shoot delay.',
+                                         'cost_func': lambda p: 250,
+                                         'scrap_func': lambda p: 4, 'deps': [('weapon', 1)]},
+                    'shotgun_unlocked': {'name': 'Buy Shotgun',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                         'icon_color': (200, 80, 40),
+                                         'desc': 'Unlock CQC Scatter Shotgun primary.',
+                                         'cost_func': lambda p: 300,
+                                         'scrap_func': lambda p: 5, 'deps': []},
+                    'shotgun_mod':      {'name': 'Shotgun Tune',  'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 3,
+                                         'icon_color': (220, 100, 60),
+                                         'desc': '+15 % shotgun stats per rank.',
+                                         'cost_func': lambda p: (p.skills['shotgun_mod'] + 1) * 100,
+                                         'scrap_func': lambda p: (p.skills['shotgun_mod'] + 1) * 2, 'deps': [('shotgun_unlocked', 1)]},
+                    'railgun_unlocked': {'name': 'Buy Railgun',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                         'icon_color': (160, 60, 200),
+                                         'desc': 'Unlock Tachyonic Railgun primary.',
+                                         'cost_func': lambda p: 500,
+                                         'scrap_func': lambda p: 10, 'deps': []},
+                    'railgun_mod':      {'name': 'Railgun Tune',  'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 3,
+                                         'icon_color': (180, 80, 220),
+                                         'desc': 'Reduce charge delay & boost projectile velocity.',
+                                         'cost_func': lambda p: (p.skills['railgun_mod'] + 1) * 150,
+                                         'scrap_func': lambda p: (p.skills['railgun_mod'] + 1) * 4, 'deps': [('railgun_unlocked', 1)]},
+                    'torpedo':          {'name': 'Fusion Torpedo', 'slot': 'WEAPON', 'type': 'WEAPONRY',    'max_level': 4,
+                                         'icon_color': (255, 200, 0),
+                                         'desc': '-15 % cooldown, +15 % blast radius per rank.',
+                                         'cost_func': lambda p: (p.skills['torpedo'] + 1) * 80,
+                                         'scrap_func': lambda p: (p.skills['torpedo'] + 1) * 1, 'deps': []},
+                    'cluster_torpedo':  {'name': 'Cluster War',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                         'icon_color': (255, 220, 30),
+                                         'desc': 'Torpedo spawns 3 secondary blasts on impact.',
+                                         'cost_func': lambda p: 300,
+                                         'scrap_func': lambda p: 5, 'deps': [('torpedo', 2)]},
+                    'bomb_unlocked':    {'name': 'Buy Prox Bomb', 'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                         'icon_color': (200, 120, 0),
+                                         'desc': 'Unlock Proximity-fused Detonation Bomb.',
+                                         'cost_func': lambda p: 200,
+                                         'scrap_func': lambda p: 3, 'deps': []},
+                    'bomb_cap':         {'name': 'Bomb Payload',  'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 3,
+                                         'icon_color': (220, 140, 20),
+                                         'desc': '+1 max bomb cap & larger blast radius per rank.',
+                                         'cost_func': lambda p: (p.skills['bomb_cap'] + 1) * 80,
+                                         'scrap_func': lambda p: (p.skills['bomb_cap'] + 1) * 2, 'deps': [('bomb_unlocked', 1)]},
+                    'missile_unlocked': {'name': 'Buy Missile',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 1,
+                                         'icon_color': (100, 200, 80),
+                                         'desc': 'Unlock Smart-Targeting Homing Missile.',
+                                         'cost_func': lambda p: 400,
+                                         'scrap_func': lambda p: 7, 'deps': []},
+                    'missile_cap':      {'name': 'Missile Pay',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 3,
+                                         'icon_color': (120, 220, 100),
+                                         'desc': '+1 max missile cap & +20 % flight speed per rank.',
+                                         'cost_func': lambda p: (p.skills['missile_cap'] + 1) * 120,
+                                         'scrap_func': lambda p: (p.skills['missile_cap'] + 1) * 3, 'deps': [('missile_unlocked', 1)]},
+                    'ammo_loader':      {'name': 'Ammo Loader',   'slot': 'WEAPON',  'type': 'WEAPONRY',    'max_level': 3,
+                                         'icon_color': (80, 220, 180),
+                                         'desc': '+2 max ammo cap for all secondary weapons per rank.',
+                                         'cost_func': lambda p: (p.skills['ammo_loader'] + 1) * 100,
+                                         'scrap_func': lambda p: (p.skills['ammo_loader'] + 1) * 2, 'deps': []},
                 }
 
-                hovered_key = None
-                for key, node in nodes_info.items():
-                    if node['type'] != self.hub_station_active: continue
-                    node_x = 630 + (node['col'] - 1) * 180
-                    node_y = 210 + (node['row'] - 1) * 90
-                    rect = pygame.Rect(node_x, node_y, 160, 75)
-                    if rect.collidepoint(vmx, vmy):
-                        hovered_key = key
-                        
-                # 1. Draw dependency lines first
-                for key, node in nodes_info.items():
-                    if node['type'] != self.hub_station_active: continue
-                    node_x = 630 + (node['col'] - 1) * 180
-                    node_y = 210 + (node['row'] - 1) * 90
+                coords = {
+                    'shield': (0, 0, 'SHIELD'), 'deflector': (0, 1, 'SHIELD'), 'emergency_recharge': (0, 2, 'SHIELD'),
+                    'coolant': (1, 0, 'CORE'), 'nanite_repair': (1, 1, 'CORE'),
+                    'class_tier1': (2, 0, 'CORE'), 'class_tier2': (2, 1, 'CORE'), 'class_tier3': (2, 2, 'CORE'),
+                    'afterburner': (3, 0, 'ENGINE'), 'vector_nozzle': (3, 1, 'ENGINE'), 'hyperdrive': (3, 2, 'ENGINE'),
                     
-                    for dep_key, req_lvl in node['deps']:
-                        if dep_key not in nodes_info or nodes_info[dep_key]['type'] != self.hub_station_active: continue
-                        dep_node = nodes_info[dep_key]
-                        dep_x = 630 + (dep_node['col'] - 1) * 180
-                        dep_y = 210 + (dep_node['row'] - 1) * 90
-                        
-                        met = self.player.skills[dep_key] >= req_lvl
-                        line_color = GREEN if met else (100, 30, 30)
-                        
-                        if dep_node['col'] == node['col']:
-                            # Vertical connection
-                            start_pos = (dep_x + 80, dep_y + 75)
-                            end_pos = (node_x + 80, node_y)
-                        else:
-                            # Horizontal or diagonal connection
-                            start_pos = (dep_x + 160, dep_y + 37)
-                            end_pos = (node_x, node_y + 37)
-                            
-                        pygame.draw.line(self.virtual_screen, line_color, start_pos, end_pos, width=1)
-                        
-                        mid_x = (start_pos[0] + end_pos[0]) // 2
-                        mid_y = (start_pos[1] + end_pos[1]) // 2
-                        pygame.draw.circle(self.virtual_screen, line_color, (mid_x, mid_y), 3, width=1)
+                    'weapon': (0, 0, 'PRIMARY'), 'overcharge': (0, 1, 'PRIMARY'), 'ammo_loader': (0, 2, 'SECONDARY'),
+                    'shotgun_unlocked': (1, 0, 'PRIMARY'), 'shotgun_mod': (1, 1, 'PRIMARY'), 'bomb_unlocked': (1, 2, 'SECONDARY'), 'bomb_cap': (1, 3, 'SECONDARY'),
+                    'railgun_unlocked': (2, 0, 'PRIMARY'), 'railgun_mod': (2, 1, 'PRIMARY'), 'missile_unlocked': (2, 2, 'SECONDARY'), 'missile_cap': (2, 3, 'SECONDARY'),
+                    'torpedo': (3, 0, 'SECONDARY'), 'cluster_torpedo': (3, 1, 'SECONDARY')
+                }
+                for k, (c, r, s) in coords.items():
+                    if k in all_parts:
+                        all_parts[k]['col'] = c
+                        all_parts[k]['row'] = r
+                        all_parts[k]['slot'] = s
 
-                # 2. Draw nodes
-                for key, node in nodes_info.items():
-                    if node['type'] != self.hub_station_active: continue
-                    node_x = 630 + (node['col'] - 1) * 180
-                    node_y = 210 + (node['row'] - 1) * 90
-                    rect = pygame.Rect(node_x, node_y, 160, 75)
-                    
-                    unlocked = True
-                    for dep_key, req_lvl in node['deps']:
-                        if self.player.skills[dep_key] < req_lvl:
-                            unlocked = False
-                            break
-                    
-                    curr_lvl = self.player.skills[key]
-                    is_max = curr_lvl >= node['max_level']
-                    
-                    bg_color = (25, 25, 30)
-                    border_color = SLATE_GRAY
-                    border_width = 1
-                    
-                    if not unlocked:
-                        bg_color = (40, 15, 15)
-                        border_color = (180, 50, 50)
-                    elif is_max:
-                        bg_color = (15, 40, 15)
-                        border_color = (50, 200, 50)
-                        border_width = 2
-                    elif rect.collidepoint(vmx, vmy):
-                        bg_color = (40, 40, 50)
-                        border_color = CYAN
-                        border_width = 2
-                    elif curr_lvl > 0:
-                        border_color = CYAN
-                    
-                    pygame.draw.rect(self.virtual_screen, bg_color, rect)
-                    pygame.draw.rect(self.virtual_screen, border_color, rect, width=border_width)
-                    
-                    title_lbl = render_fit_text(node['name'], WHITE if unlocked else (180, 120, 120), 140, base_font_size=15)
-                    self.virtual_screen.blit(title_lbl, (node_x + 10, node_y + 12))
-                    
-                    rank_lbl = self.small_font.render(f"Rank: {curr_lvl}/{node['max_level']}", True, YELLOW if unlocked else (160, 160, 160))
-                    self.virtual_screen.blit(rank_lbl, (node_x + 10, node_y + 35))
-                    
-                    if not unlocked:
-                        cost_text = "LOCKED"
-                        cost_color = RED
-                        cost_lbl = self.small_font.render(cost_text, True, cost_color)
-                        self.virtual_screen.blit(cost_lbl, (node_x + 10, node_y + 55))
-                    elif is_max:
-                        cost_text = "MAXED"
-                        cost_color = GREEN
-                        cost_lbl = self.small_font.render(cost_text, True, cost_color)
-                        self.virtual_screen.blit(cost_lbl, (node_x + 10, node_y + 55))
-                    else:
-                        # Render Credits cost
-                        credits_color = GREEN if self.player.credits >= node['cost'] else ORANGE
-                        credits_lbl = self.small_font.render(f"{node['cost']} C", True, credits_color)
-                        self.virtual_screen.blit(credits_lbl, (node_x + 10, node_y + 55))
-                        
-                        # Render Scrap cost
-                        scrap_color = GOLD if self.player.scraps >= node['scrap_cost'] else (200, 100, 50)
-                        scrap_lbl = self.small_font.render(f"{node['scrap_cost']} Scrap", True, scrap_color)
-                        self.virtual_screen.blit(scrap_lbl, (node_x + 10 + credits_lbl.get_width() + 10, node_y + 55))
-
-                # 3. Draw tooltip area at the bottom
-                tooltip_rect = pygame.Rect(630, 620, 520, 180)
-                pygame.draw.rect(self.virtual_screen, (15, 15, 20), tooltip_rect, border_radius=8)
-                pygame.draw.rect(self.virtual_screen, SLATE_GRAY, tooltip_rect, width=1, border_radius=8)
+                # title + wallet
+                title_text = "ZENITH UPGRADE PROTOCOL" if self.hub_station_active == 'ENGINEERING' else "ZENITH ARMAMENT MATRIX"
+                tree_title = self.large_font.render(title_text, True, CYAN)
+                self.virtual_screen.blit(tree_title, (10, 100))
                 
-                if hovered_key is not None:
-                    hovered = nodes_info[hovered_key]
-                    name_lbl = self.font.render(hovered['name'].upper(), True, CYAN)
-                    self.virtual_screen.blit(name_lbl, (650, 635))
-                    
-                    desc_text = hovered['desc']
-                    words = desc_text.split(' ')
-                    line1, line2 = "", ""
-                    for w in words:
-                        if len(line1 + w) < 48:
-                            line1 += w + " "
-                        else:
-                            line2 += w + " "
-                    
-                    desc1_lbl = self.small_font.render(line1.strip(), True, WHITE)
-                    self.virtual_screen.blit(desc1_lbl, (650, 675))
-                    if line2:
-                        desc2_lbl = self.small_font.render(line2.strip(), True, WHITE)
-                        self.virtual_screen.blit(desc2_lbl, (650, 698))
-                    
-                    if hovered['deps']:
-                        rx_draw = 650
-                        ry_draw = 730
-                        req_label = self.small_font.render("Requires: ", True, WHITE)
-                        self.virtual_screen.blit(req_label, (rx_draw, ry_draw))
-                        rx_draw += req_label.get_width()
-                        
-                        for idx, (dep_key, req_lvl) in enumerate(hovered['deps']):
-                            dep_name = nodes_info[dep_key]['name']
-                            met = self.player.skills[dep_key] >= req_lvl
-                            color = GREEN if met else RED
-                            sep = ", " if idx < len(hovered['deps']) - 1 else ""
-                            req_lbl = self.small_font.render(f"{dep_name} (Rank {req_lvl}+){sep}", True, color)
-                            self.virtual_screen.blit(req_lbl, (rx_draw, ry_draw))
-                            rx_draw += req_lbl.get_width()
+                sub_text = "SYSTEM INTEGRATION MATRIX" if self.hub_station_active == 'ENGINEERING' else "TACTICAL WEAPON ASSEMBLY"
+                tree_sub = self.small_font.render(sub_text, True, (160, 190, 220))
+                self.virtual_screen.blit(tree_sub, (15, 142))
+                
+                wallet_c = self.small_font.render(f"Credits: {self.player.credits}", True, GREEN)
+                wallet_s = self.small_font.render(f"  | Scrap: {self.player.scraps}", True, GOLD)
+                self.virtual_screen.blit(wallet_c, (400, 142))
+                self.virtual_screen.blit(wallet_s, (400 + wallet_c.get_width(), 142))
+
+                # ── Slot colours & labels ──────────────────────────────────
+                slot_meta = {
+                    'ENGINE': {'cx': 1000, 'cy': 310, 'col': (255, 140, 0),  'label': 'ENGINE'},
+                    'SHIELD': {'cx': 870,  'cy': 480, 'col': (0, 180, 255),  'label': 'SHIELD'},
+                    'CORE':   {'cx': 1000, 'cy': 480, 'col': (0, 255, 180),  'label': 'CORE'},
+                    'PRIMARY': {'cx': 1130, 'cy': 410, 'col': (255, 80, 80),  'label': 'PRIMARY WP'},
+                    'SECONDARY': {'cx': 1130, 'cy': 550, 'col': (255, 200, 0),  'label': 'SECONDARY WP'},
+                }
+
+                # ── SHELF PANEL (left / centre-left) ──────────────────────
+                shelf_panel = pygame.Rect(5, 175, 595, 700)
+                pygame.draw.rect(self.virtual_screen, (14, 18, 28), shelf_panel, border_radius=8)
+                pygame.draw.rect(self.virtual_screen, (40, 50, 70), shelf_panel, width=1, border_radius=8)
+
+                shelf_lbl = self.small_font.render("◀  PARTS SHELF — drag a part onto the ship blueprint slot  ▶", True, (120, 160, 200))
+                self.virtual_screen.blit(shelf_lbl, (shelf_panel.x + 10, shelf_panel.y + 8))
+
+                active_parts = [k for k, v in all_parts.items() if v['type'] == self.hub_station_active]
+
+                CARD_W, CARD_H = 140, 78
+                CARD_PAD_X, CARD_PAD_Y = 6, 6
+                shelf_origin_x = shelf_panel.x + 8
+                shelf_origin_y = shelf_panel.y + 30
+
+                # Store card rects for hover tooltip detection
+                hovered_key = None
+
+                # Draw tree connection lines first so they are behind cards
+                for key in active_parts:
+                    part = all_parts[key]
+                    cx = shelf_origin_x + part['col'] * (CARD_W + CARD_PAD_X)
+                    cy = shelf_origin_y + part['row'] * (CARD_H + CARD_PAD_Y)
+                    for dep_key, req_lvl in part['deps']:
+                        if dep_key in all_parts:
+                            dep_part = all_parts[dep_key]
+                            if dep_part['type'] == self.hub_station_active:
+                                dcx = shelf_origin_x + dep_part['col'] * (CARD_W + CARD_PAD_X)
+                                dcy = shelf_origin_y + dep_part['row'] * (CARD_H + CARD_PAD_Y)
+                                start_pt = (dcx + CARD_W // 2, dcy + CARD_H)
+                                end_pt = (cx + CARD_W // 2, cy)
+                                line_col = CYAN if self.player.skills.get(dep_key, 0) >= req_lvl else (60, 60, 70)
+                                mid_y = (start_pt[1] + end_pt[1]) // 2
+                                pygame.draw.lines(self.virtual_screen, line_col, False, [
+                                    start_pt,
+                                    (start_pt[0], mid_y),
+                                    (end_pt[0], mid_y),
+                                    end_pt
+                                ], 2)
+
+                for idx, key in enumerate(active_parts):
+                    part = all_parts[key]
+                    col = part['col']
+                    row = part['row']
+                    cx = shelf_origin_x + col * (CARD_W + CARD_PAD_X)
+                    cy = shelf_origin_y + row * (CARD_H + CARD_PAD_Y)
+                    card_rect = pygame.Rect(cx, cy, CARD_W, CARD_H)
+
+                    curr_lvl = self.player.skills.get(key, 0)
+                    max_lvl  = part['max_level']
+                    is_maxed = curr_lvl >= max_lvl
+
+                    # Dep check
+                    unlocked = all(self.player.skills.get(dk, 0) >= dv for dk, dv in part['deps'])
+
+                    # Can afford?
+                    cost_c  = part['cost_func'](self.player)
+                    cost_s  = part['scrap_func'](self.player)
+
+                    # being dragged?
+                    is_dragging = (self.dragged_part_key == key and self.dragged_origin == 'SHELF')
+
+                    hovered = card_rect.collidepoint(vmx, vmy)
+                    if hovered:
+                        hovered_key = key
+
+                    # Card BG
+                    if is_dragging:
+                        bg = (20, 40, 60)
+                        border = CYAN
+                        bw = 2
+                    elif is_maxed:
+                        bg = (15, 35, 15)
+                        border = GREEN
+                        bw = 2
+                    elif not unlocked:
+                        bg = (30, 15, 15)
+                        border = (150, 40, 40)
+                        bw = 1
+                    elif hovered:
+                        bg = (30, 40, 60)
+                        border = CYAN
+                        bw = 2
                     else:
-                        req_lbl = self.small_font.render("Requirements: None", True, GREEN)
-                        self.virtual_screen.blit(req_lbl, (650, 730))
+                        bg = (18, 22, 34)
+                        border = (60, 70, 90)
+                        bw = 1
+
+                    pygame.draw.rect(self.virtual_screen, bg,     card_rect, border_radius=5)
+                    if hovered and unlocked and not is_maxed:
+                        scan_y = card_rect.y + int((ticks * 0.08) % card_rect.height)
+                        pygame.draw.line(self.virtual_screen, (0, 150, 180), (card_rect.x + 2, scan_y), (card_rect.right - 2, scan_y), 1)
+                    pygame.draw.rect(self.virtual_screen, border, card_rect, width=bw, border_radius=5)
+
+                    # Part icon (coloured hex shape with custom vector)
+                    ico_x = cx + 10
+                    ico_y = cy + 12
+                    ico_col = part['icon_color'] if unlocked else (80, 80, 80)
+                    if is_maxed:
+                        ico_col = GREEN
+                    self.draw_part_icon(self.virtual_screen, ico_x + 12, ico_y + 12, key, ico_col, ticks)
+
+                    # Part name
+                    name_surf = render_fit_text(part['name'], WHITE if unlocked else (150, 100, 100), CARD_W - 44, base_font_size=13)
+                    self.virtual_screen.blit(name_surf, (cx + 36, cy + 8))
+
+                    # Rank dots
+                    for d in range(max_lvl):
+                        dot_col = ico_col if d < curr_lvl else (50, 50, 60)
+                        pygame.draw.circle(self.virtual_screen, dot_col, (cx + 36 + d * 14, cy + 32), 5)
+                        pygame.draw.circle(self.virtual_screen, WHITE,   (cx + 36 + d * 14, cy + 32), 5, 1)
+
+                    # Status line
+                    if is_maxed:
+                        status_surf = render_fit_text("✓ MAXED", GREEN, CARD_W - 12, base_font_size=11)
+                        self.virtual_screen.blit(status_surf, (cx + 6, cy + 54))
+                    elif not unlocked:
+                        status_surf = render_fit_text("🔒 LOCKED", RED, CARD_W - 12, base_font_size=11)
+                        self.virtual_screen.blit(status_surf, (cx + 6, cy + 54))
+                    else:
+                        cc = GREEN if self.player.credits >= cost_c else (200, 80, 80)
+                        sc = GOLD  if self.player.scraps  >= cost_s  else (200, 80, 80)
+                        c_surf = render_fit_text(f"{cost_c}c", cc, 55, base_font_size=11)
+                        s_surf = render_fit_text(f"{cost_s}sc", sc, 55, base_font_size=11)
+                        self.virtual_screen.blit(c_surf, (cx + 6,  cy + 54))
+                        self.virtual_screen.blit(s_surf, (cx + 68, cy + 54))
+
+
+
+                # ── RIGHT PANEL: SHIP BLUEPRINT ───────────────────────────
+                bp_panel = pygame.Rect(625, 175, 575, 700)
+                pygame.draw.rect(self.virtual_screen, (10, 14, 24), bp_panel, border_radius=8)
+                pygame.draw.rect(self.virtual_screen, (30, 50, 80), bp_panel, width=1, border_radius=8)
+
+                bp_title = self.font.render("SHIP BLUEPRINT", True, (60, 100, 160))
+                self.virtual_screen.blit(bp_title, (bp_panel.x + 10, bp_panel.y + 8))
+
+                # Draw cyan vector ship outline centred in blueprint panel
+                bp_cx = 1000
+                bp_cy = 450
+                T = pygame.time.get_ticks()
+
+                def _bp_line(a, b, col=(30, 70, 120), w=1):
+                    pygame.draw.line(self.virtual_screen, col,
+                                     (int(bp_cx + a[0]), int(bp_cy + a[1])),
+                                     (int(bp_cx + b[0]), int(bp_cy + b[1])), w)
+
+                # Hull
+                _bp_line(( 0, -130), (-55,  20), (40, 100, 160), 2)
+                _bp_line(( 0, -130), ( 55,  20), (40, 100, 160), 2)
+                _bp_line((-55,  20), (  0,  40), (40, 100, 160), 2)
+                _bp_line(( 55,  20), (  0,  40), (40, 100, 160), 2)
+                # Cockpit
+                _bp_line(( 0, -130), (-15, -80), (60, 140, 200))
+                _bp_line(( 0, -130), ( 15, -80), (60, 140, 200))
+                _bp_line((-15, -80), ( 15, -80), (60, 140, 200))
+                # Wings
+                _bp_line((-55,  20), (-120, 60), (30, 80, 130), 2)
+                _bp_line((-120, 60), ( -80, 80), (30, 80, 130), 2)
+                _bp_line(( -80, 80), ( -40, 50), (30, 80, 130), 2)
+                _bp_line(( 55,  20), ( 120, 60), (30, 80, 130), 2)
+                _bp_line(( 120, 60), (  80, 80), (30, 80, 130), 2)
+                _bp_line((  80, 80), (  40, 50), (30, 80, 130), 2)
+                # Engine nozzles
+                _bp_line((-25,  40), (-30,  80), (50, 80, 120))
+                _bp_line(( 25,  40), ( 30,  80), (50, 80, 120))
+                _bp_line((-30,  80), ( 30,  80), (50, 80, 120))
+                # Center spine
+                _bp_line((0, -80), (0, 40), (20, 60, 100))
+                # Grid dots
+                for gx in range(-80, 81, 40):
+                    for gy in range(-100, 101, 40):
+                        pygame.draw.circle(self.virtual_screen, (20, 35, 55), (bp_cx + gx, bp_cy + gy), 1)
+
+                # ── Slot circles ──────────────────────────────────────────
+                for slot_name, sm in slot_meta.items():
+                    scx, scy = sm['cx'], sm['cy']
+                    s_col = sm['col']
+
+                    # Check if parts in this slot installed
+                    if slot_name == 'PRIMARY':
+                        eq_map = {0: 'weapon', 1: 'shotgun_unlocked', 2: 'railgun_unlocked'}
+                        eq_key = eq_map.get(self.player.active_primary)
+                        installed = [eq_key] if (eq_key and self.player.skills.get(eq_key, 0) > 0) else []
+                    elif slot_name == 'SECONDARY':
+                        eq_map = {0: 'torpedo', 1: 'bomb_unlocked', 2: 'missile_unlocked'}
+                        eq_key = eq_map.get(self.player.active_secondary)
+                        installed = [eq_key] if (eq_key and self.player.skills.get(eq_key, 0) > 0) else []
+                    elif slot_name == 'SHIELD':
+                        eq_key = self.player.equipped_shield
+                        installed = [eq_key] if (eq_key and self.player.skills.get(eq_key, 0) > 0) else []
+                    elif slot_name == 'CORE':
+                        eq_key = self.player.equipped_core
+                        installed = [eq_key] if (eq_key and self.player.skills.get(eq_key, 0) > 0) else []
+                    elif slot_name == 'ENGINE':
+                        eq_key = self.player.equipped_engine
+                        installed = [eq_key] if (eq_key and self.player.skills.get(eq_key, 0) > 0) else []
+                    else:
+                        installed = [k for k, v in all_parts.items() if v['slot'] == slot_name and self.player.skills.get(k, 0) > 0]
+
+                    is_target = (self.dragged_part_key is not None and
+                                 all_parts.get(self.dragged_part_key, {}).get('slot') == slot_name and
+                                 self.dragged_origin == 'SHELF')
+
+                    pulse = 0.5 + 0.5 * math.sin(T * 0.004)
+                    ring_r = 32 if not is_target else 36
+
+                    if is_target:
+                        # Green glow ring when dragging valid part over its slot
+                        dist_to_slot = math.hypot(vmx - scx, vmy - scy)
+                        is_hovering_slot = (dist_to_slot < 45)
+                        ring_col = GREEN if is_hovering_slot else CYAN
+                        ring_w = 4 if is_hovering_slot else 2
+                        pygame.draw.circle(self.virtual_screen, ring_col, (scx, scy), ring_r, ring_w)
+                        # Draw rotating outer dotted locking rings
+                        for a in range(8):
+                            ang = math.radians(a * 45 + ticks * 0.05)
+                            ox = scx + int((ring_r + 6) * math.cos(ang))
+                            oy = scy + int((ring_r + 6) * math.sin(ang))
+                            pygame.draw.circle(self.virtual_screen, ring_col, (ox, oy), 2)
+                        # inner fill flash
+                        flash_surf = pygame.Surface((ring_r * 2, ring_r * 2), pygame.SRCALPHA)
+                        flash_surf.fill((0, 0, 0, 0))
+                        pygame.draw.circle(flash_surf, (*ring_col, int(60 * pulse)), (ring_r, ring_r), ring_r - 3)
+                        self.virtual_screen.blit(flash_surf, (scx - ring_r, scy - ring_r))
+                        
+                        if is_hovering_slot:
+                            # Highly visible drop indicator overlay
+                            drop_lbl = self.small_font.render("DROP TO INSTALL", True, GREEN)
+                            self.virtual_screen.blit(drop_lbl, (scx - drop_lbl.get_width() // 2, scy - ring_r - 18))
+                    elif installed:
+                        # Draw high-tech slot box
+                        pygame.draw.circle(self.virtual_screen, s_col, (scx, scy), ring_r, 2)
+                        
+                        # Draw rotating nested pattern
+                        for r_offset in range(3):
+                            o_ang = ticks * 0.003 + r_offset * (2 * math.pi / 3)
+                            ox = scx + int(ring_r * 0.8 * math.cos(o_ang))
+                            oy = scy + int(ring_r * 0.8 * math.sin(o_ang))
+                            pygame.draw.circle(self.virtual_screen, s_col, (ox, oy), 3)
+                            
+                        # Draw slot-specific glowing graphics
+                        ticks = pygame.time.get_ticks()
+                        if slot_name == 'PRIMARY':
+                            # Draw primary double gun barrel design
+                            pygame.draw.line(self.virtual_screen, WHITE, (scx - 4, scy - 12), (scx - 4, scy + 8), 2)
+                            pygame.draw.line(self.virtual_screen, WHITE, (scx + 4, scy - 12), (scx + 4, scy + 8), 2)
+                            pygame.draw.rect(self.virtual_screen, s_col, (scx - 8, scy + 8, 16, 6))
+                        elif slot_name == 'SECONDARY':
+                            # Draw rocket / missile outline
+                            pygame.draw.polygon(self.virtual_screen, WHITE, [(scx, scy - 12), (scx - 6, scy + 2), (scx + 6, scy + 2)])
+                            pygame.draw.rect(self.virtual_screen, s_col, (scx - 4, scy + 2, 8, 8))
+                            pygame.draw.line(self.virtual_screen, RED, (scx, scy + 10), (scx, scy + 14), 2)
+                        elif slot_name == 'SHIELD':
+                            # Hexagon shield dome
+                            pts = []
+                            for a in range(6):
+                                ang = math.radians(a * 60 + ticks * 0.02)
+                                pts.append((scx + 12 * math.cos(ang), scy + 12 * math.sin(ang)))
+                            pygame.draw.polygon(self.virtual_screen, s_col, pts, 1)
+                            pygame.draw.circle(self.virtual_screen, WHITE, (scx, scy), 4)
+                        elif slot_name == 'CORE':
+                            # Microchip/nuclear core
+                            pygame.draw.rect(self.virtual_screen, s_col, (scx - 10, scy - 10, 20, 20), width=1)
+                            pygame.draw.circle(self.virtual_screen, WHITE, (scx, scy), 6 + int(2 * math.sin(ticks * 0.05)))
+                        elif slot_name == 'ENGINE':
+                            # Thruster nozzle with fire
+                            pygame.draw.polygon(self.virtual_screen, s_col, [(scx - 8, scy - 8), (scx + 8, scy - 8), (scx + 4, scy + 6), (scx - 4, scy + 6)])
+                            pygame.draw.circle(self.virtual_screen, ORANGE, (scx, scy + 10), 4 + int(2 * math.sin(ticks * 0.08)))
+                    else:
+                        pygame.draw.circle(self.virtual_screen, (50, 60, 80), (scx, scy), ring_r, 1)
+
+                    # Slot label
+                    slot_tag_surf = render_fit_text(sm['label'], s_col if installed else (80, 100, 120), 80, base_font_size=11)
+                    self.virtual_screen.blit(slot_tag_surf, (scx - slot_tag_surf.get_width() // 2, scy + ring_r + 4))
+
+                    # Installed part names stacked
+                    for ii, ik in enumerate(installed):
+                        ivl = self.player.skills.get(ik, 0)
+                        iname = all_parts[ik]['name']
+                        i_col = all_parts[ik]['icon_color']
+                        ip_surf = render_fit_text(f"▪ {iname} Lv{ivl}", i_col, 120, base_font_size=9)
+                        self.virtual_screen.blit(ip_surf, (scx - ip_surf.get_width() // 2, scy - ring_r - 16 - ii * 14))
+
+                # ── RECYCLING BIN ─────────────────────────────────────────
+                bin_rect = pygame.Rect(640, 580, 150, 70)
+                bin_hov  = bin_rect.collidepoint(vmx, vmy)
+                bin_glow = self.dragged_part_key is not None and self.dragged_origin in ('SHIP_SLOT', 'OWNED_WEAPONS')
+                bin_bg   = (70, 30, 30) if (bin_glow and bin_hov) else ((50, 20, 20) if bin_glow else (20, 20, 25))
+                bin_brd  = (255, 120, 60) if (bin_glow and bin_hov) else ((220, 80, 30) if bin_glow else (100, 60, 40))
+                pygame.draw.rect(self.virtual_screen, bin_bg,  bin_rect, border_radius=6)
+                pygame.draw.rect(self.virtual_screen, bin_brd, bin_rect, width=2, border_radius=6)
+
+                # Bin icon
+                bx, by = bin_rect.x + 12, bin_rect.y + 10
+                pygame.draw.rect(self.virtual_screen, bin_brd, (bx, by + 6, 26, 22))           # body
+                pygame.draw.rect(self.virtual_screen, bin_brd, (bx + 4, by, 18, 5))             # lid
+                for sl in range(3):                                                              # bin lines
+                    pygame.draw.line(self.virtual_screen, (180, 90, 60), (bx + 5 + sl * 8, by + 9), (bx + 5 + sl * 8, by + 25), 1)
+
+                bin_lbl1 = render_fit_text("RECYCLE BIN", (220, 110, 60), 95, base_font_size=11)
+                bin_lbl2 = render_fit_text("Drop here to sell", (160, 100, 60), 95, base_font_size=9)
+                self.virtual_screen.blit(bin_lbl1, (bx + 32, by + 3))
+                self.virtual_screen.blit(bin_lbl2, (bx + 32, by + 22))
+
+                # ── OWNED PARTS / WEAPONS INVENTORY (BOTTOM OF BLUEPRINT) ─────────
+                if self.hub_station_active in ('WEAPONRY', 'ENGINEERING'):
+                    sep_y = 650
+                    pygame.draw.line(self.virtual_screen, (40, 50, 70), (bp_panel.x + 10, sep_y), (bp_panel.x + bp_panel.width - 10, sep_y), 1)
+                    
+                    inv_title = "OWNED WEAPONS INVENTORY" if self.hub_station_active == 'WEAPONRY' else "OWNED UPGRADES INVENTORY"
+                    inv_lbl = self.font.render(inv_title, True, CYAN)
+                    self.virtual_screen.blit(inv_lbl, (bp_panel.x + 15, sep_y + 10))
+                    inv_sub = self.small_font.render("Drag to RECYCLE BIN to sell / refund", True, (120, 160, 200))
+                    self.virtual_screen.blit(inv_sub, (bp_panel.x + 15, sep_y + 35))
+                    
+                    if self.hub_station_active == 'WEAPONRY':
+                        weapon_keys = ['weapon', 'shotgun_unlocked', 'railgun_unlocked', 'torpedo', 'bomb_unlocked', 'missile_unlocked']
+                        equipped_keys = []
+                        eq_p = {0: 'weapon', 1: 'shotgun_unlocked', 2: 'railgun_unlocked'}.get(self.player.active_primary)
+                        if eq_p and self.player.skills.get(eq_p, 0) > 0:
+                            equipped_keys.append(eq_p)
+                        eq_s = {0: 'torpedo', 1: 'bomb_unlocked', 2: 'missile_unlocked'}.get(self.player.active_secondary)
+                        if eq_s and self.player.skills.get(eq_s, 0) > 0:
+                            equipped_keys.append(eq_s)
+                        owned_items = [k for k in weapon_keys if self.player.skills.get(k, 0) > 0 and k not in equipped_keys]
+                        inv_origin_type = 'OWNED_WEAPONS'
+                        inv_origin_x = bp_panel.x + 15
+                        cols_num = 3
+                    else:
+                        item_keys = ['shield', 'deflector', 'emergency_recharge', 'coolant', 'nanite_repair', 'class_tier1', 'class_tier2', 'class_tier3', 'afterburner', 'vector_nozzle', 'hyperdrive']
+                        equipped_keys = [self.player.equipped_shield, self.player.equipped_core, self.player.equipped_engine]
+                        owned_items = [k for k in item_keys if self.player.skills.get(k, 0) > 0 and k not in equipped_keys]
+                        inv_origin_type = 'OWNED_ITEMS'
+                        inv_origin_x = 820 # Bottom-right alignment
+                        cols_num = 2
+                    
+                    inv_origin_y = sep_y + 60
+                    INV_CARD_W, INV_CARD_H = 170, 70
+                    INV_PAD_X, INV_PAD_Y = 10, 10
+                    
+                    for idx, key in enumerate(owned_items):
+                        col = idx % cols_num
+                        row = idx // cols_num
+                        cx = inv_origin_x + col * (INV_CARD_W + INV_PAD_X)
+                        cy = inv_origin_y + row * (INV_CARD_H + INV_PAD_Y)
+                        
+                        card_rect = pygame.Rect(cx, cy, INV_CARD_W, INV_CARD_H)
+                        part = all_parts[key]
+                        
+                        is_dragging = (self.dragged_part_key == key and self.dragged_origin == inv_origin_type)
+                        hovered = card_rect.collidepoint(vmx, vmy)
+                        if hovered and not self.dragged_part_key:
+                            hovered_key = key
+                            
+                        bg = (24, 28, 40)
+                        border = CYAN if hovered or is_dragging else (60, 70, 90)
+                        bw = 2 if (hovered or is_dragging) else 1
+                        
+                        pygame.draw.rect(self.virtual_screen, bg, card_rect, border_radius=5)
+                        pygame.draw.rect(self.virtual_screen, border, card_rect, width=bw, border_radius=5)
+                        
+                        ico_x = cx + 8
+                        ico_y = cy + 8
+                        ico_col = part['icon_color']
+                        self.draw_part_icon(self.virtual_screen, ico_x + 12, ico_y + 12, key, ico_col, ticks)
+                        
+                        name_surf = render_fit_text(part['name'], WHITE, INV_CARD_W - 36, base_font_size=12)
+                        self.virtual_screen.blit(name_surf, (cx + 34, cy + 6))
+                        
+                        lvl_surf = self.small_font.render(f"Lvl {self.player.skills[key]}", True, YELLOW)
+                        self.virtual_screen.blit(lvl_surf, (cx + 34, cy + 24))
+                        
+                        drag_info = self.small_font.render("DRAG TO SELL", True, (160, 100, 60))
+                        self.virtual_screen.blit(drag_info, (cx + 34, cy + 42))
+
+                # ── Tooltip strip at bottom of left shelf panel ─────────────────────
+                tip_rect = pygame.Rect(10, 780, 585, 85)
+                pygame.draw.rect(self.virtual_screen, (10, 14, 24), tip_rect, border_radius=6)
+                pygame.draw.rect(self.virtual_screen, (30, 50, 80), tip_rect, width=1, border_radius=6)
+                if hovered_key:
+                    hv = all_parts[hovered_key]
+                    tip_name = self.font.render(hv['name'].upper(), True, hv['icon_color'])
+                    self.virtual_screen.blit(tip_name, (20, 785))
+                    words = hv['desc'].split()
+                    line, lines = '', []
+                    for w in words:
+                        if len(line + w) < 70: line += w + ' '
+                        else: lines.append(line.strip()); line = w + ' '
+                    lines.append(line.strip())
+                    for li, ln in enumerate(lines[:3]):
+                        self.virtual_screen.blit(self.small_font.render(ln, True, WHITE), (20, 807 + li * 16))
+                    slot_col = slot_meta.get(hv['slot'], {}).get('col', WHITE)
+                    sl_lbl = self.small_font.render(f"Slot: {hv['slot']}", True, slot_col)
+                    self.virtual_screen.blit(sl_lbl, (480, 785))
+                    dep_names = []
+                    for dk, dv in hv['deps']:
+                        dep_part = all_parts.get(dk)
+                        dep_name = dep_part['name'] if dep_part else dk
+                        dep_names.append(f"{dep_name} Lv{dv}")
+                    dep_text = "Reqs: " + (", ".join(dep_names) if dep_names else "None")
+                    dep_col_list = [GREEN if self.player.skills.get(dk, 0) >= dv else RED for dk, dv in hv['deps']]
+                    dep_col = GREEN if all(self.player.skills.get(dk, 0) >= dv for dk, dv in hv['deps']) else RED
+                    dep_surf = self.small_font.render(dep_text, True, dep_col)
+                    self.virtual_screen.blit(dep_surf, (480, 803))
                 else:
-                    help_lbl = self.font.render("HOVER OVER A TECH NODE TO VIEW SPECIFICATIONS.", True, SLATE_GRAY)
-                    help_rect = help_lbl.get_rect(center=(630 + 260, 620 + 90))
-                    self.virtual_screen.blit(help_lbl, help_rect)
+                    help_surf = self.small_font.render("Hover a shelf card to inspect  |  Drag → slot to install  |  Drag installed → Bin to recycle", True, (70, 90, 120))
+                    self.virtual_screen.blit(help_surf, (20, 812))
+
+                # ── GHOST drag rendering ────────────────────────────────────
+                if self.dragged_part_key is not None:
+                    dp = all_parts.get(self.dragged_part_key)
+                    if dp:
+                        # Draw dotted connector line
+                        start_pos = (getattr(self, 'drag_start_x', vmx), getattr(self, 'drag_start_y', vmy))
+                        end_pos = (vmx, vmy)
+                        dx = end_pos[0] - start_pos[0]
+                        dy = end_pos[1] - start_pos[1]
+                        dist = math.hypot(dx, dy)
+                        if dist > 0:
+                            num_dots = int(dist / 10)
+                            for d_idx in range(num_dots):
+                                t_val = d_idx / num_dots
+                                px = start_pos[0] + dx * t_val
+                                py = start_pos[1] + dy * t_val
+                                pygame.draw.circle(self.virtual_screen, (0, 255, 255), (int(px), int(py)), 2)
+                                
+                        gx = int(vmx - 50)
+                        gy = int(vmy - 35)
+                        ghost = pygame.Surface((100, 70), pygame.SRCALPHA)
+                        ghost.fill((0, 0, 0, 0))
+                        pygame.draw.rect(ghost, (*dp['icon_color'], 160), (0, 0, 100, 70), border_radius=6)
+                        pygame.draw.rect(ghost, (*WHITE, 200),            (0, 0, 100, 70), width=2, border_radius=6)
+                        g_lbl = render_fit_text(dp['name'], WHITE, 90, base_font_size=12)
+                        ghost.blit(g_lbl, (5, 10))
+                        lvl_text = f"Lv {self.player.skills.get(self.dragged_part_key, 0)} → {self.player.skills.get(self.dragged_part_key, 0) + 1}"
+                        g_sub = render_fit_text(lvl_text if self.dragged_origin == 'SHELF' else "↩ RECYCLE", YELLOW, 90, base_font_size=10)
+                        ghost.blit(g_sub, (5, 45))
+                        self.virtual_screen.blit(ghost, (gx, gy))
+                
+                if hovered_key != getattr(self, 'last_hovered_key', None):
+                    self.last_hovered_key = hovered_key
+                    if hovered_key and SOUNDS:
+                        SOUNDS.play('tick')
+
 
         # Game Over Overlay
         elif self.state == 'GAME_OVER':
@@ -7314,25 +9297,40 @@ class Game:
                 menu_msg.set_alpha(prompt_alpha)
                 menu_rect = menu_msg.get_rect(center=(VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2 + 180))
                 self.virtual_screen.blit(menu_msg, menu_rect)
-                
         # Victory Overlay
         elif self.state == 'VICTORY':
             v_time = current_time - self.victory_start_time
             
-            if v_time < 5000:
-                # PHASE 1: Galaxy Liberation
-                self.virtual_screen.fill((5, 10, 20))
+            if v_time < 5500:
+                # PHASE 1: Galaxy Liberation & Sector Network restoration
+                self.virtual_screen.fill((4, 8, 16))
                 
-                # Draw soft galaxy nebula glow in background
+                # Draw galaxy nebula glow
                 nebula_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                pygame.draw.circle(nebula_surf, (30, 15, 60, 40), (VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 2), 400)
-                pygame.draw.circle(nebula_surf, (15, 45, 75, 40), (2 * VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 3), 500)
+                pygame.draw.circle(nebula_surf, (20, 40, 80, 50), (VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 2), 400)
+                pygame.draw.circle(nebula_surf, (50, 15, 75, 45), (2 * VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 3), 500)
                 self.virtual_screen.blit(nebula_surf, (0, 0))
                 
-                # Draw mini-map of sectors with glowing effects
+                # Biome sector positions
+                coords = []
                 for i, (name, cfg) in enumerate(BIOME_CONFIGS.items()):
                     cx = 200 + (i % 3) * 400
-                    cy = 200 + (i // 3) * 250
+                    cy = 200 + (i // 3) * 230
+                    coords.append((cx, cy))
+                    
+                # Animate restored neural constellation connection lines
+                for j in range(len(coords) - 1):
+                    line_start = j * 450
+                    if v_time > line_start:
+                        progress = min(1.0, (v_time - line_start) / 450.0)
+                        x1, y1 = coords[j]
+                        x2, y2 = coords[j+1]
+                        current_end = (int(x1 + (x2 - x1) * progress), int(y1 + (y2 - y1) * progress))
+                        pygame.draw.line(self.virtual_screen, (0, 255, 120, 150), (x1, y1), current_end, width=2)
+
+                # Draw mini-map of sectors with glowing effects
+                for i, (name, cfg) in enumerate(BIOME_CONFIGS.items()):
+                    cx, cy = coords[i]
                     color = cfg['theme_color']
                     pulse = abs(math.sin(current_time * 0.005 + i)) * 12
                     
@@ -7343,17 +9341,32 @@ class Game:
                     
                     # Main ring and core
                     pygame.draw.circle(self.virtual_screen, color, (cx, cy), 30, width=2)
-                    pygame.draw.circle(self.virtual_screen, (255, 255, 255), (cx, cy), 4)
+                    pygame.draw.circle(self.virtual_screen, WHITE, (cx, cy), 4)
                     
                     # Lens flare lines
                     pygame.draw.line(self.virtual_screen, (color[0], color[1], color[2], 120), (cx - 45, cy), (cx + 45, cy), width=1)
                     pygame.draw.line(self.virtual_screen, (color[0], color[1], color[2], 120), (cx, cy - 45), (cx, cy + 45), width=1)
-                
+                    
+                    # Sector labels
+                    lbl = self.small_font.render(name, True, color)
+                    self.virtual_screen.blit(lbl, (cx - lbl.get_width()//2, cy + 35))
+
+                # Render typewriter telemetry logs
+                telemetry = [
+                    ">> RESTORING ZENITH NETWORK CONNECTION...",
+                    ">> SYNAPSE CALIBRATION MATRIX: ESTABLISHED",
+                    ">> SECURE PROTOCOLS ONLINE // THREAT ELIMINATED."
+                ]
+                for idx, line in enumerate(telemetry):
+                    if v_time > 1200 + idx * 700:
+                        t_surf = self.small_font.render(line, True, GREEN)
+                        self.virtual_screen.blit(t_surf, (80, VIRTUAL_HEIGHT - 150 + idx * 25))
+
                 # Player ship flies across the galaxy
-                ship_x = -100 + (v_time / 5000.0) * (VIRTUAL_WIDTH + 200)
+                ship_x = -100 + (v_time / 5500.0) * (VIRTUAL_WIDTH + 200)
                 ship_y = VIRTUAL_HEIGHT // 2 + math.sin(v_time * 0.002) * 100
                 
-                # Engine spark particles trailing behind
+                # Engine sparks
                 for _ in range(3):
                     sp_x = ship_x - 30 - random.randint(0, 40)
                     sp_y = ship_y + random.randint(-15, 15)
@@ -7364,20 +9377,18 @@ class Game:
                     pygame.draw.circle(sp_surf, sp_color, (sp_r, sp_r), sp_r)
                     self.virtual_screen.blit(sp_surf, (int(sp_x - sp_r), int(sp_y - sp_r)))
                 
-                # Render the user's completed ship
                 self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 1.0, 0.0, scale=1.0, thruster_intensity=1.2)
                 
                 msg = self.large_font.render("GALAXY LIBERATED", True, WHITE)
-                self.virtual_screen.blit(msg, (VIRTUAL_WIDTH//2 - msg.get_width()//2, 50))
+                self.virtual_screen.blit(msg, (VIRTUAL_WIDTH//2 - msg.get_width()//2, 45))
 
-            elif v_time < 9000:
-                # PHASE 2: Hyper-jump Failure
-                warp_progress = (v_time - 5000) / 4000.0
+            elif v_time < 9500:
+                # PHASE 2: Hyper-jump Failure & Glitch alerts
                 self.virtual_screen.fill(BLACK)
                 
                 # Warp star tunnel effect
                 center_x, center_y = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
-                random.seed(42)  # Seed to keep the star trajectory layout consistent
+                random.seed(42)
                 for j in range(60):
                     angle = (j * 13.7) % (2 * math.pi)
                     speed = 10 + (j % 15) * 5
@@ -7388,114 +9399,140 @@ class Game:
                     sx2 = center_x + math.cos(angle) * dist
                     sy2 = center_y + math.sin(angle) * dist
                     pygame.draw.line(self.virtual_screen, (200, 220, 255), (int(sx1), int(sy1)), (int(sx2), int(sy2)), width=max(1, int(dist * 0.005)))
-                random.seed()  # Reset seed
+                random.seed()
                 
                 # Draw player ship in the middle shaking violently
                 ship_x = center_x + random.randint(-8, 8)
                 ship_y = center_y + random.randint(-8, 8)
                 
-                # Reactor critical effects (sparks erupting from engine)
+                # Draw electric arcs discharging from ship core
+                for _ in range(4):
+                    start_pt = (ship_x + random.randint(-20, 20), ship_y + random.randint(-20, 20))
+                    end_pt = (start_pt[0] + random.randint(-90, 90), start_pt[1] + random.randint(-90, 90))
+                    mid_pt = ((start_pt[0] + end_pt[0])//2 + random.randint(-20, 20), (start_pt[1] + end_pt[1])//2 + random.randint(-20, 20))
+                    pygame.draw.line(self.virtual_screen, CYAN, start_pt, mid_pt, 2)
+                    pygame.draw.line(self.virtual_screen, WHITE, mid_pt, end_pt, 2)
+
+                # Reactor critical sparks
                 for _ in range(4):
                     sp_x = ship_x - 30 - random.randint(0, 30)
                     sp_y = ship_y + random.randint(-15, 15)
                     pygame.draw.circle(self.virtual_screen, RED if random.random() > 0.5 else ORANGE, (int(sp_x), int(sp_y)), random.randint(3, 8))
                 
-                # Draw the actual ship
                 self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 1.0, 0.0, scale=1.1, thruster_intensity=0.8)
                 
-                # Visual Glitches & Alarms
+                # Visual Glitches, Cockpit triangle alarms, & overlay flashing
                 if v_time % 300 < 150:
                     alert_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
                     alert_surf.fill((255, 0, 0, 60))
                     self.virtual_screen.blit(alert_surf, (0, 0))
-                    warn = self.large_font.render("REACTOR CRITICAL", True, RED)
-                    self.virtual_screen.blit(warn, (VIRTUAL_WIDTH//2 - warn.get_width()//2, VIRTUAL_HEIGHT//2 - 120))
                     
-                    system_fail = self.font.render("HYPERDRIVE CORE FAILURE - EMERGENCY EJECT", True, WHITE)
-                    self.virtual_screen.blit(system_fail, (VIRTUAL_WIDTH//2 - system_fail.get_width()//2, VIRTUAL_HEIGHT//2 + 100))
-                
-                self.screen_shake = 12
+                    # Cockpit warning triangle
+                    pygame.draw.polygon(self.virtual_screen, RED, [(center_x, center_y - 140), (center_x - 80, center_y - 20), (center_x + 80, center_y - 20)], width=4)
+                    excl = self.large_font.render("!", True, RED)
+                    self.virtual_screen.blit(excl, (center_x - excl.get_width()//2, center_y - 110))
 
-            elif v_time < 13000:
-                # PHASE 3: Atmospheric Entry
-                entry_time = v_time - 9000
-                # Draw burning dark green sky
-                self.virtual_screen.fill((30, 48, 36))
+                    warn = self.large_font.render("REACTOR CORE CRITICAL", True, RED)
+                    self.virtual_screen.blit(warn, (VIRTUAL_WIDTH//2 - warn.get_width()//2, 60))
+                    
+                    system_fail = self.font.render("HYPERDRIVE CORE FAILURE - AUTOMATIC SHUTDOWN", True, WHITE)
+                    self.virtual_screen.blit(system_fail, (VIRTUAL_WIDTH//2 - system_fail.get_width()//2, VIRTUAL_HEIGHT - 120))
                 
-                # Moving fire/ash clouds rushing upwards
+                # Random vertical CRT glitch scanlines
+                if random.random() < 0.35:
+                    glitch_y = random.randint(0, VIRTUAL_HEIGHT)
+                    pygame.draw.rect(self.virtual_screen, (255, 0, 0, 100), (0, glitch_y, VIRTUAL_WIDTH, random.randint(4, 15)))
+
+                self.screen_shake = 14
+
+            elif v_time < 13500:
+                # PHASE 3: Atmospheric Entry & plasma heat shield
+                entry_time = v_time - 9500
+                self.virtual_screen.fill((25, 42, 32))
+                
+                # Moving fire/ash clouds rising
                 for i in range(12):
-                    offset = (entry_time * 1.5 + i * 150) % VIRTUAL_HEIGHT
+                    offset = (entry_time * 1.6 + i * 150) % VIRTUAL_HEIGHT
                     cloud_w = 400 + (i % 3) * 200
                     cloud_h = 80 + (i % 2) * 40
                     cloud_x = (i * 130) % VIRTUAL_WIDTH - cloud_w // 2
-                    cloud_color = (60, 45, 35, 100) if i % 2 == 0 else (45, 65, 50, 100)
+                    cloud_color = (55, 40, 30, 110) if i % 2 == 0 else (40, 60, 45, 110)
                     cloud_surf = pygame.Surface((cloud_w, cloud_h), pygame.SRCALPHA)
                     pygame.draw.ellipse(cloud_surf, cloud_color, (0, 0, cloud_w, cloud_h))
                     self.virtual_screen.blit(cloud_surf, (cloud_x, VIRTUAL_HEIGHT - offset))
                 
-                # Downward streaking ship with fire
+                # Downward streaking ship
                 ship_x = VIRTUAL_WIDTH // 2 + math.sin(v_time * 0.05) * 20
-                ship_y = 100 + (entry_time / 4000.0) * 600
+                ship_y = 80 + (entry_time / 4000.0) * 600
                 
                 # Glowing heat shield/plasma layer at the nose of the ship
-                heat_surf = pygame.Surface((120, 120), pygame.SRCALPHA)
-                for r in range(3):
-                    glow_r = 25 + r * 15 + random.randint(-5, 5)
-                    glow_alpha = 150 - r * 40
-                    pygame.draw.circle(heat_surf, (255, 100 + r * 50, 0, glow_alpha), (60, 60), glow_r)
-                self.virtual_screen.blit(heat_surf, (int(ship_x - 60), int(ship_y + 10)))
+                for r in range(4):
+                    pygame.draw.arc(self.virtual_screen, (255, 80 + r * 45, 0), (int(ship_x - 65 - r*6), int(ship_y + 10), 130 + r*12, 70), 0, math.pi, width=3)
                 
-                # Trailing fire and sparks shooting upward
-                for _ in range(8):
-                    fx = ship_x + random.randint(-25, 25)
-                    fy = ship_y - random.randint(10, 120)
-                    f_size = random.randint(6, 20)
-                    pygame.draw.circle(self.virtual_screen, (255, random.randint(100, 200), 0), (int(fx), int(fy)), f_size)
+                # Dense fire and ash sparks shooting upward
+                for _ in range(12):
+                    fx = ship_x + random.randint(-35, 35)
+                    fy = ship_y - random.randint(10, 150)
+                    f_size = random.randint(6, 25)
+                    f_color = (255, random.randint(80, 210), 0) if random.random() < 0.7 else (80, 80, 80)
+                    pygame.draw.circle(self.virtual_screen, f_color, (int(fx), int(fy)), f_size)
                     
-                # Streaking friction lines
+                # Friction lines
                 for _ in range(15):
                     lx = random.randint(0, VIRTUAL_WIDTH)
                     ly = random.randint(0, VIRTUAL_HEIGHT)
                     llen = random.randint(60, 250)
-                    pygame.draw.line(self.virtual_screen, (255, 200, 100, 80), (lx, ly), (lx, ly - llen), width=1)
+                    pygame.draw.line(self.virtual_screen, (255, 180, 80, 90), (lx, ly), (lx, ly - llen), width=1)
                 
-                # Draw the actual ship pointing DOWN: direction (0.0, 1.0)
+                # Draw ship pointing DOWN (0.0, 1.0)
                 self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 0.0, 1.0, scale=1.0, damaged=False, thruster_intensity=0.0)
                 
-                # Draw atmospheric burning overlay
+                # Atmospheric burning overlay
                 overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((255, 120, 0, min(100, int(entry_time * 0.02))))
+                overlay.fill((255, 110, 0, min(120, int(entry_time * 0.035))))
                 self.virtual_screen.blit(overlay, (0, 0))
                 
-                self.screen_shake = 6
+                self.screen_shake = 8
                 
-                if entry_time > 3800:
+                if entry_time > 3700:
                     flash = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
                     flash.fill(WHITE)
                     self.virtual_screen.blit(flash, (0,0))
 
             else:
-                # PHASE 4: Crash Site & Sequel Teaser
-                self.virtual_screen.fill((8, 12, 10))  # Very dark green sky
+                # PHASE 4: Crash Site & Sequel Teaser with Scrolling Credits
+                self.virtual_screen.fill((6, 10, 8))
                 
                 # Planet Surface / Hills
-                pygame.draw.ellipse(self.virtual_screen, (15, 25, 18), (-200, 700, VIRTUAL_WIDTH + 400, 400))
-                pygame.draw.ellipse(self.virtual_screen, (22, 34, 25), (-100, 750, VIRTUAL_WIDTH + 200, 300))
+                pygame.draw.ellipse(self.virtual_screen, (12, 22, 15), (-200, 700, VIRTUAL_WIDTH + 400, 400))
+                pygame.draw.ellipse(self.virtual_screen, (18, 30, 22), (-100, 750, VIRTUAL_WIDTH + 200, 300))
                 
-                # Glowing Alien Moon
-                moon_x, moon_y = 950, 180
-                moon_color = (180, 255, 200)
-                # Moon atmosphere glow
+                # Double Moon system
+                # Moon 1
+                m1x, m1y = 960, 160
+                m1col = (170, 255, 190)
                 for r in range(4):
                     g_surf = pygame.Surface((240, 240), pygame.SRCALPHA)
-                    pygame.draw.circle(g_surf, (moon_color[0], moon_color[1], moon_color[2], 40 - r * 10), (120, 120), 80 + r * 15)
-                    self.virtual_screen.blit(g_surf, (moon_x - 120, moon_y - 120))
-                pygame.draw.circle(self.virtual_screen, moon_color, (moon_x, moon_y), 80)
+                    pygame.draw.circle(g_surf, (m1col[0], m1col[1], m1col[2], 30 - r * 8), (120, 120), 80 + r * 15)
+                    self.virtual_screen.blit(g_surf, (m1x - 120, m1y - 120))
+                pygame.draw.circle(self.virtual_screen, m1col, (m1x, m1y), 80)
+                # Moon 2 (Smaller)
+                m2x, m2y = 800, 260
+                m2col = (130, 180, 255)
+                for r in range(3):
+                    g_surf = pygame.Surface((120, 120), pygame.SRCALPHA)
+                    pygame.draw.circle(g_surf, (m2col[0], m2col[1], m2col[2], 25 - r * 8), (60, 60), 40 + r * 10)
+                    self.virtual_screen.blit(g_surf, (m2x - 60, m2y - 60))
+                pygame.draw.circle(self.virtual_screen, m2col, (m2x, m2y), 40)
                 
-                # Crashed ship coordinates
+                # Crashed ship
                 ship_x, ship_y = VIRTUAL_WIDTH // 2, 775
                 
-                # Heavy Smoke rising from the wreck
+                # Engine embers burning
+                if random.random() < 0.4:
+                    self.particles.append(Particle(ship_x + random.randint(-20, 20), ship_y + 10, RED))
+                
+                # Heavy Smoke rising
                 for i in range(5):
                     ticks = pygame.time.get_ticks()
                     sx = ship_x - 10 + math.sin(ticks * 0.002 + i) * 15
@@ -7506,8 +9543,8 @@ class Game:
                     pygame.draw.circle(s_surf, (50, 52, 50, alpha // 3), (40, 40), 25 + i * 8)
                     self.virtual_screen.blit(s_surf, (int(sx - 40), int(sy - 40)))
                 
-                # Bioluminescent spores floating in the atmosphere
-                random.seed(99)  # Keep spore positions consistent
+                # Bioluminescent spores
+                random.seed(99)
                 for i in range(25):
                     px = (i * 63 + pygame.time.get_ticks() * 0.01 * (1 + i % 3)) % VIRTUAL_WIDTH
                     py = (i * 37 - pygame.time.get_ticks() * 0.005 * (1 + i % 2)) % 650
@@ -7516,19 +9553,47 @@ class Game:
                     pygame.draw.circle(self.virtual_screen, p_color, (int(px), int(py)), 3 + (i % 3))
                 random.seed()
                 
-                # Hull sparks erupting occasionally
+                # Spark eruptions occasionally
                 if pygame.time.get_ticks() % 1500 < 250:
                     for _ in range(4):
                         spx = ship_x + random.randint(-40, 40)
                         spy = ship_y + random.randint(-10, 20)
                         pygame.draw.line(self.virtual_screen, (255, 255, 100), (spx, spy), (spx + random.randint(-15, 15), spy - random.randint(10, 25)), width=2)
                 
-                # Render the damaged custom ship tilted at 45 degrees
                 self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 1.0, 0.0, scale=1.1, damaged=True, thruster_intensity=0.0, rotation_angle=45)
                 
-                # UI Reveal
-                if v_time > 15000:
-                    alpha = min(255, (v_time - 15000) // 10)
+                # Atmospheric overlay
+                overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+                overlay.fill((10, 30, 20, 20))
+                self.virtual_screen.blit(overlay, (0, 0))
+
+                # Dynamic Scrolling Credits Crawl
+                credits_lines = [
+                    "ZENITH: LIBERATION",
+                    "",
+                    "CREATED BY",
+                    "YOU",
+                    "",
+                    "CO-DEVELOPED WITH",
+                    "ADVANCED AI CO-PILOT",
+                    "",
+                    "TO BE CONTINUED IN ZENITH: NEW FRONTIER"
+                ]
+                
+                scroll_speed = 0.08
+                scroll_y_start = VIRTUAL_HEIGHT + 50
+                scroll_y = scroll_y_start - (v_time - 13500) * scroll_speed
+                
+                for idx, line in enumerate(credits_lines):
+                    ly = scroll_y + idx * 38
+                    if -50 < ly < VIRTUAL_HEIGHT + 50:
+                        text_color = CYAN if idx in (0, 2, 5, 8) else WHITE
+                        c_surf = self.font.render(line, True, text_color)
+                        self.virtual_screen.blit(c_surf, (VIRTUAL_WIDTH // 2 - c_surf.get_width() // 2, int(ly)))
+
+                # UI Teaser reveal
+                if v_time > 26000:
+                    alpha = min(255, (v_time - 26000) // 10)
                     teaser_surf = self.large_font.render("ZENITH", True, (0, 255, 255))
                     teaser_surf.set_alpha(alpha)
                     self.virtual_screen.blit(teaser_surf, (VIRTUAL_WIDTH//2 - teaser_surf.get_width()//2, VIRTUAL_HEIGHT//2 - 80))
@@ -7635,11 +9700,6 @@ class Game:
         self.screen.fill(BLACK)
         
         bx, by = self.offset_x, self.offset_y
-        if self.screen_shake > 0:
-            shake_amt = min(self.screen_shake, 3)
-            bx += random.randint(-shake_amt, shake_amt)
-            by += random.randint(-shake_amt, shake_amt)
-            self.screen_shake = max(0, self.screen_shake - 1)
             
         self.screen.blit(scaled_screen, (bx, by))
         pygame.display.flip()
