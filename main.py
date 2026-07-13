@@ -9463,17 +9463,29 @@ class Game:
                     pygame.draw.line(screen, (230, 230, 235), (VIRTUAL_WIDTH - 380, 210), (VIRTUAL_WIDTH - 300, 250), width=2)
                     pygame.draw.line(screen, (230, 230, 235), (VIRTUAL_WIDTH - 300, 250), (VIRTUAL_WIDTH - 330, 320), width=1)
 
-            if v_time < 5500:
-                # PHASE 1: Galaxy Flight (Cockpit View)
+            if v_time < 8000:
+                # PHASE 1: Galaxy Flight & Portal Entry (Cockpit View)
                 self.virtual_screen.fill((2, 4, 10))
                 
-                # Swirling Portal ring getting larger
+                # Draw passing warp starfield in the background (layered behind portal)
                 center_x, center_y = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
-                portal_radius = int(50 + (v_time / 5500.0) * 450)
+                random.seed(99)
+                for j in range(50):
+                    angle = (j * 17.3) % (2 * math.pi)
+                    speed = 8 + (j % 5) * 3
+                    dist = ((v_time * 0.08 * speed) + j * 50) % 700
+                    if dist < 10: continue
+                    sx = center_x + math.cos(angle) * dist
+                    sy = center_y + math.sin(angle) * dist
+                    pygame.draw.circle(self.virtual_screen, (200, 220, 255), (int(sx), int(sy)), max(1, int(dist * 0.004)))
+                random.seed()
+                
+                # Swirling Portal ring getting larger
+                portal_radius = int(50 + (v_time / 8000.0) * 450)
                 
                 # Render glowing portal circles
                 ticks = pygame.time.get_ticks()
-                portal_color = CYAN if v_time < 4200 else RED  # portal collapses / turns red near the end of phase 1!
+                portal_color = CYAN if v_time < 6200 else RED  # portal collapses / turns red near the end of phase 1!
                 
                 for r in range(4):
                     pygame.draw.circle(self.virtual_screen, portal_color, (center_x, center_y), portal_radius + r * 15, width=2)
@@ -9500,16 +9512,24 @@ class Game:
                 ]
                 for idx, line in enumerate(telemetry):
                     if v_time > 1200 + idx * 700:
-                        t_surf = self.small_font.render(line, True, GREEN if v_time < 4200 else RED)
+                        t_surf = self.small_font.render(line, True, GREEN if v_time < 6200 else RED)
                         self.virtual_screen.blit(t_surf, (80, 50 + idx * 25))
                         
                 draw_first_person_cockpit(self.virtual_screen, 1)
                 
+                # Smooth white flash near the end of Phase 1
+                if v_time > 7500:
+                    alpha = int((v_time - 7500) / 500.0 * 255)
+                    flash = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+                    flash.fill(WHITE)
+                    flash.set_alpha(alpha)
+                    self.virtual_screen.blit(flash, (0, 0))
+                
                 msg = self.large_font.render("GALAXY LIBERATED", True, WHITE)
                 self.virtual_screen.blit(msg, (VIRTUAL_WIDTH//2 - msg.get_width()//2, 120))
 
-            elif v_time < 9500:
-                # PHASE 2: Hyper-jump Failure (Cockpit View)
+            elif v_time < 14000:
+                # PHASE 2: Hyper-jump Failure & Collapse (Cockpit View)
                 self.virtual_screen.fill(BLACK)
                 
                 # Unstable distorted crimson hyper-warp vortex
@@ -9547,13 +9567,29 @@ class Game:
                 
                 draw_first_person_cockpit(self.virtual_screen, 2)
                 self.screen_shake = 14
+                
+                # Smooth white flash fade-out at start of Phase 2
+                if v_time < 8500:
+                    alpha = int((8500 - v_time) / 500.0 * 255)
+                    flash = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+                    flash.fill(WHITE)
+                    flash.set_alpha(alpha)
+                    self.virtual_screen.blit(flash, (0, 0))
+                
+                # Smooth magenta flash at end of Phase 2
+                if v_time > 13500:
+                    alpha = int((v_time - 13500) / 500.0 * 255)
+                    flash = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+                    flash.fill((255, 0, 100))
+                    flash.set_alpha(alpha)
+                    self.virtual_screen.blit(flash, (0, 0))
 
-            elif v_time < 13500:
+            elif v_time < 20000:
                 # PHASE 3: Dimensional Turbulence (Cockpit View)
-                entry_time = v_time - 9500
+                entry_time = v_time - 14000
                 self.virtual_screen.fill((20, 5, 25))
                 
-                # Torn dimensional tempest colors rising
+                # Swirling dimensional storm currents rising
                 for _ in range(25):
                     fx = random.randint(50, VIRTUAL_WIDTH - 50)
                     fy = VIRTUAL_HEIGHT - 180 - random.randint(0, 380)
@@ -9563,7 +9599,7 @@ class Game:
                     pygame.draw.circle(f_surf, f_color, (f_size, f_size), f_size)
                     self.virtual_screen.blit(f_surf, (fx - f_size, fy - f_size))
                     
-                # Electrical arcs outside the canopy
+                # Electrical arcs outside the canopy window
                 if random.random() < 0.4:
                     px1 = random.randint(100, VIRTUAL_WIDTH - 100)
                     py1 = random.randint(50, VIRTUAL_HEIGHT - 220)
@@ -9571,17 +9607,28 @@ class Game:
                     py2 = py1 + random.randint(-100, 100)
                     pygame.draw.line(self.virtual_screen, (100, 255, 255), (px1, py1), (px2, py2), width=3)
                 
-                # Burning/Turbulence overlay
+                # Dimensional tint overlay
                 overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((200, 0, 255, min(140, int(entry_time * 0.04))))
+                overlay.fill((200, 0, 255, min(140, int(entry_time * 0.03))))
                 self.virtual_screen.blit(overlay, (0, 0))
                 
                 draw_first_person_cockpit(self.virtual_screen, 3)
                 self.screen_shake = 10
                 
-                if entry_time > 3700:
+                # Smooth magenta flash fade-out at start of Phase 3
+                if v_time < 14500:
+                    alpha = int((14500 - v_time) / 500.0 * 255)
+                    flash = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+                    flash.fill((255, 0, 100))
+                    flash.set_alpha(alpha)
+                    self.virtual_screen.blit(flash, (0, 0))
+                
+                # Smooth white flash near the end of Phase 3 before crashing
+                if entry_time > 5200:
+                    alpha = int((entry_time - 5200) / 800.0 * 255)
                     flash = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
                     flash.fill(WHITE)
+                    flash.set_alpha(alpha)
                     self.virtual_screen.blit(flash, (0,0))
 
             else:
@@ -9608,6 +9655,15 @@ class Game:
                     pygame.draw.circle(self.virtual_screen, YELLOW, (sp_x, sp_y), random.randint(3, 8))
                 
                 draw_first_person_cockpit(self.virtual_screen, 4)
+                
+                # Smooth white crash flash fade-out at start of Phase 4
+                fade_time = v_time - 20000
+                if fade_time < 1200:
+                    alpha = int((1200 - fade_time) / 1200.0 * 255)
+                    flash = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+                    flash.fill(WHITE)
+                    flash.set_alpha(alpha)
+                    self.virtual_screen.blit(flash, (0, 0))
                 
                 # UI Teaser reveal
                 if v_time > 26000:
