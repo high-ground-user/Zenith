@@ -3748,9 +3748,9 @@ class Game:
         self.planet_features = []
         self.planet_texture = None
         self.planet_clouds = None
-        if not hasattr(self, 'player_name'):
-            self.player_name = ""
-        self.campaign_stage = getattr(self, 'campaign_stage', 1)
+        self.campaign_stage = 1
+        self.min_y_generated = 600
+        self.max_y_generated = 600
         # Pre-cache planet mask for performance - ensured here so it exists if pausing in Hub
         self.planet_mask = pygame.Surface((1600, 1600), pygame.SRCALPHA)
         pygame.draw.circle(self.planet_mask, (255, 255, 255, 255), (800, 800), 800)
@@ -7667,10 +7667,6 @@ class Game:
                     lbl_text = f"{cfg['name'].upper()} PORTAL"
                     lbl = self.font.render(lbl_text, True, theme_color)
                     self.virtual_screen.blit(lbl, (center[0] - lbl.get_width() // 2, lbl_y))
-                    
-                    info_text = f"({cfg['desc']})"
-                    info = self.font.render(info_text, True, WHITE)
-                    self.virtual_screen.blit(info, (center[0] - info.get_width() // 2, info_y))
             
             welcome_text = f"SAFE HAVEN HUB STATION - SEGMENT {self.current_hub_index}"
             welcome = self.large_font.render(welcome_text, True, WHITE)
@@ -7988,26 +7984,35 @@ class Game:
                 cfg = BIOME_CONFIGS.get(self.current_zone, {'name': 'Unknown Sector', 'desc': 'Hostile Environment'})
                 lbl_zone = self.large_font.render(cfg['name'].upper(), True, CYAN)
                 
-                lbl_desc_str = "OBJECTIVE: GATHER 5 MATRIX CORES"
-                lbl_extra_str = "SYSTEM STATUS: EXPLORATION MODE // HACK TERMINALS FOR LOOT"
-                if self.current_zone == 'VULCAN':
-                    lbl_desc_str = "OBJECTIVE: DEFEND THE CONVOY TRANSPORT"
-                    lbl_extra_str = "SYSTEM STATUS: ESCORT MISSION // DESTROY INTERCEPTORS"
+                lbl_desc_str = "OBJECTIVE: RETRIEVE 5 MATRIX CORES"
+                lbl_extra_str = "WARNING: HEAVY ASTEROID IMPACT HAZARDS & GRAVITY WELLS"
+                if self.current_zone == 'TUTORIAL':
+                    lbl_desc_str = "OBJECTIVE: COMPLETE PILOT WEAPONS & CONTROLS TRAINING"
+                    lbl_extra_str = "SYSTEM STATUS: NO-DAMAGE COCKPIT PRACTICE FIELD"
+                elif self.current_zone == 'VULCAN':
+                    lbl_desc_str = "OBJECTIVE: ESCORT CONVOY SHIP TO SAFETY"
+                    lbl_extra_str = "WARNING: ENEMY INTERCEPTOR RAIDERS INBOUND // STAY CLOSE"
+                elif self.current_zone == 'AQUARIS':
+                    lbl_desc_str = "OBJECTIVE: LOCATE & DEFEAT FROST ARCH-TEMPEST MINIBOSS"
+                    lbl_extra_str = "WARNING: CRYOGENIC SHIELDS ACTIVE // DODGE MISSILES"
                 elif self.current_zone == 'NEBULA':
-                    lbl_desc_str = "OBJECTIVE: ESCAPE THE SUPERNOVA CHASE"
-                    lbl_extra_str = "SYSTEM STATUS: SECTOR COLLAPSE DETECTED // FLY UPWARD IMMEDIATELY"
+                    lbl_desc_str = "OBJECTIVE: RACE UPWARD AND ESCAPE SUPERNOVA SHOCKWAVE"
+                    lbl_extra_str = "DANGER: HIGH RADIATION STORM INCOMING FROM BELOW // FLY UPWARD IMMEDIATELY"
                 elif self.current_zone == 'PLASMA':
-                    lbl_desc_str = "OBJECTIVE: COLLECT 5 PLASMA ENERGY CELLS"
-                    lbl_extra_str = "SYSTEM STATUS: OVERLOAD REACTOR CORES"
-                elif self.current_zone == 'QUANTUM':
-                    lbl_desc_str = "OBJECTIVE: DESTROY THE QUANTUM BLACK HOLE CORE"
-                    lbl_extra_str = "SYSTEM STATUS: CHOP THROUGH QUANTUM RIFTS TO HIT Hidden CORE"
+                    lbl_desc_str = "OBJECTIVE: CHARGE SECTOR GENERATORS WITH 5 ENERGY CELLS"
+                    lbl_extra_str = "WARNING: AVOID VOLATILE ELECTRICAL CURRENTS & SOLAR JUGGERNAUTS"
                 elif self.current_zone == 'VOID':
-                    lbl_desc_str = "OBJECTIVE: ELIMINATE 10 VOID THREATS"
-                    lbl_extra_str = "SYSTEM STATUS: CLEAR EXTRADIMENSIONAL ASSASSINS"
-                elif self.current_zone in ('AQUARIS', 'SINGULARITY', 'ORION'):
-                    lbl_desc_str = "OBJECTIVE: DEFEAT THE SECTOR BOSS"
-                    lbl_extra_str = "SYSTEM STATUS: ELIMINATE MAJOR THREAT"
+                    lbl_desc_str = "OBJECTIVE: HUNT & DEFEAT 4 ABYSS SENTINELS"
+                    lbl_extra_str = "WARNING: EXTRADIMENSIONAL SINGULARITIES DETECTED"
+                elif self.current_zone == 'QUANTUM':
+                    lbl_desc_str = "OBJECTIVE: SHATTER 3 DIMENSIONAL STABILIZERS"
+                    lbl_extra_str = "WARNING: WEAVE BETWEEN NORMAL & SPIRIT REALMS TO ATTACK Hidden CORE"
+                elif self.current_zone == 'SINGULARITY':
+                    lbl_desc_str = "OBJECTIVE: INFILTRATE FACTORY CORE & SABOTAGE MELTDOWN"
+                    lbl_extra_str = "WARNING: NARROW GRID CORRIDORS & INDESTRUCTIBLE WALL HAZARDS"
+                elif self.current_zone == 'ORION':
+                    lbl_desc_str = "OBJECTIVE: LAY SIEGE TO ORION OVERLORD CITADEL"
+                    lbl_extra_str = "WARNING: FINAL ENEMY CITADEL FORTRESS // CRUSH SHIELD DRONES"
                     
                 lbl_desc = self.font.render(lbl_desc_str, True, WHITE)
                 lbl_extra = self.small_font.render(lbl_extra_str, True, GREEN)
