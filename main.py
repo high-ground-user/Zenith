@@ -6090,20 +6090,6 @@ class Game:
                 self.spawn_explosion(eb.x, eb.y, [(255, 100, 100), (255, 255, 255)], 6) # Explosion on self-detonate
                 continue # Skip further processing for this bullet
         for eb in self.enemy_bullets[:]:
-            # Apply gravitational pull from other gravity wells
-            if not getattr(eb, 'is_gravity', False):
-                eb_pos = pygame.math.Vector2(eb.x, eb.y)
-                for other_eb in self.enemy_bullets:
-                    if getattr(other_eb, 'is_gravity', False) and other_eb is not eb:
-                        gw = pygame.math.Vector2(other_eb.x, other_eb.y)
-                        dist = eb_pos.distance_to(gw)
-                        if 0 < dist < 450:
-                            to_gw = (gw - eb_pos).normalize()
-                            dir_vec = pygame.math.Vector2(eb.dx, eb.dy).normalize()
-                            dir_vec += to_gw * (450 - dist) * 0.0025 # Median influence
-                            dir_vec = dir_vec.normalize()
-                            eb.dx, eb.dy = dir_vec.x, dir_vec.y
-
             eb.update(self.flares)
             if eb.y < self.camera_y - 100 or eb.y > self.camera_y + VIRTUAL_HEIGHT + 100:
                 if eb in self.enemy_bullets:
@@ -6188,21 +6174,24 @@ class Game:
                 bullet.x < self.camera_x - 100 or bullet.x > self.camera_x + VIRTUAL_WIDTH + 100):
                 self.bullets.remove(bullet)
 
+        # Check gravitational projectile collisions with other player weapons (torpedoes/missiles)
+        for eb in self.enemy_bullets[:]:
+            if getattr(eb, 'is_gravity', False):
+                for torpedo in self.torpedoes[:]:
+                    if not torpedo.exploded and torpedo.rect.colliderect(eb.rect):
+                        if eb in self.enemy_bullets: self.enemy_bullets.remove(eb)
+                        torpedo.exploded = True
+                        torpedo.explosion_timer = 0
+                        self.spawn_explosion(eb.x, eb.y, [(255, 255, 255), (100, 100, 255)], 15)
+                        break
+                for missile in self.missiles[:]:
+                    if not missile.exploded and missile.rect.colliderect(eb.rect):
+                        if eb in self.enemy_bullets: self.enemy_bullets.remove(eb)
+                        self.detonate_missile(missile, self.boss.sub_bosses if self.boss else [])
+                        break
+
         # Update torpedoes
         for torpedo in self.torpedoes[:]:
-            # Apply gravitational pull from gravity wells
-            torpedo_pos = pygame.math.Vector2(torpedo.x, torpedo.y)
-            for eb in self.enemy_bullets:
-                if getattr(eb, 'is_gravity', False):
-                    gw = pygame.math.Vector2(eb.x, eb.y)
-                    dist = torpedo_pos.distance_to(gw)
-                    if 0 < dist < 450:
-                        to_gw = (gw - torpedo_pos).normalize()
-                        dir_vec = pygame.math.Vector2(torpedo.dx, torpedo.dy).normalize()
-                        dir_vec += to_gw * (450 - dist) * 0.0025 # Median influence
-                        dir_vec = dir_vec.normalize()
-                        torpedo.dx, torpedo.dy = dir_vec.x, dir_vec.y
-
             torpedo.update()
             if torpedo.exploded:
                 if torpedo.explosion_timer >= torpedo.explosion_duration:
