@@ -1533,8 +1533,9 @@ class Boss:
         zone_keys = ['ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'VOID', 'QUANTUM', 'SINGULARITY', 'ORION']
         diff_idx = zone_keys.index(zone) if zone in zone_keys else 0
         
-        # Boss difficulty adjustments: start harder, but scale more gently later on
-        base_max_health = 42 + diff_idx * 8
+        # Boss difficulty adjustments: scale health strongly based on progression depth
+        sub_boss_base_health = 60 + diff_idx * 20
+        base_max_health = sub_boss_base_health * self.boss_count
         self.shoot_delay = max(650, 1350 - diff_idx * 75)
         self.max_health = base_max_health
         self.health = self.max_health
@@ -1653,6 +1654,16 @@ class Boss:
         
         for ent in self.sub_bosses:
             ent.update_position(self.x, self.y, t)
+            
+        if self.zone == 'ORION':
+            for ent in self.sub_bosses:
+                if not ent.is_dead:
+                    ent_rect = pygame.Rect(ent.x - ent.width // 2, ent.y - ent.height // 2, ent.width, ent.height)
+                    for obs in game_instance.static_obstacles[:]:
+                        if ent_rect.colliderect(obs.rect):
+                            if obs in game_instance.static_obstacles:
+                                game_instance.static_obstacles.remove(obs)
+                                game_instance.spawn_explosion(obs.rect.centerx, obs.rect.centery, [(255, 0, 255), (100, 100, 100)], 12)
             
         if self.zone == 'AQUARIS':
             active_crystals = [c for c in self.shield_crystals if c.health > 0]
@@ -4113,48 +4124,56 @@ class Game:
         self.bg_structure = BackgroundStructure(zone_name)
         self._procedurally_generate_chunk(600, -1000)
         self.level_start_time = pygame.time.get_ticks()
+        self.boss_spawned_orion = False
 
     def _procedurally_generate_chunk(self, from_y, to_y):
         min_y = min(int(from_y), int(to_y))
         max_y = max(int(from_y), int(to_y))
         # Generate static obstacles as player flies up
-        if self.current_zone == 'SINGULARITY':
-            # Core Room y coordinate is -3000, x center is 600
-            
-            # Place Core Room walls if this chunk covers y = -3000
-            if to_y <= -2500 and from_y >= -3500:
-                self.static_obstacles = [obs for obs in self.static_obstacles if not (abs(obs.x - 600) < 550 and abs(obs.y - (-3000)) < 550)]
-                bx_min, bx_max = 200, 1000
-                by_min, by_max = -3400, -2600
+        if self.current_zone in ('SINGULARITY', 'ORION'):
+            if self.current_zone == 'SINGULARITY':
+                # Core Room y coordinate is -3000, x center is 600
                 
-                # Draw top wall with 240px wide gate at center (480 to 720)
-                for wx in range(bx_min, bx_max + 120, 120):
-                    if not (480 <= wx <= 720):
-                        self.static_obstacles.append(FactoryStructure(wx, by_min, 120, 120))
-                        
-                # Draw bottom wall with 240px wide gate at center (480 to 720)
-                for wx in range(bx_min, bx_max + 120, 120):
-                    if not (480 <= wx <= 720):
-                        self.static_obstacles.append(FactoryStructure(wx, by_max, 120, 120))
-                        
-                # Draw left and right walls
-                for wy in range(by_min + 120, by_max, 120):
-                    self.static_obstacles.append(FactoryStructure(bx_min, wy, 120, 120))
-                    self.static_obstacles.append(FactoryStructure(bx_max, wy, 120, 120))
-            
-            # Regular corridor grid outside of the Core Room
-            cols = [-1800, -1200, -600, 0, 600, 1200, 1800, 2400, 3000]
+                # Place Core Room walls if this chunk covers y = -3000
+                if to_y <= -2500 and from_y >= -3500:
+                    self.static_obstacles = [obs for obs in self.static_obstacles if not (abs(obs.x - 600) < 550 and abs(obs.y - (-3000)) < 550)]
+                    bx_min, bx_max = 200, 1000
+                    by_min, by_max = -3400, -2600
+                    
+                    # Draw top wall with 240px wide gate at center (480 to 720)
+                    for wx in range(bx_min, bx_max + 120, 120):
+                        if not (480 <= wx <= 720):
+                            self.static_obstacles.append(FactoryStructure(wx, by_min, 120, 120))
+                            
+                    # Draw bottom wall with 240px wide gate at center (480 to 720)
+                    for wx in range(bx_min, bx_max + 120, 120):
+                        if not (480 <= wx <= 720):
+                            self.static_obstacles.append(FactoryStructure(wx, by_max, 120, 120))
+                            
+                    # Draw left and right walls
+                    for wy in range(by_min + 120, by_max, 120):
+                        self.static_obstacles.append(FactoryStructure(bx_min, wy, 120, 120))
+                        self.static_obstacles.append(FactoryStructure(bx_max, wy, 120, 120))
+                
+                # Regular corridor grid outside of the Core Room
+                cols = [-1800, -1200, -600, 0, 600, 1200, 1800, 2400, 3000]
+                grid_spacing = 600
+            else: # ORION
+                # Spaced wider: cols every 1200px
+                cols = [-2400, -1200, 0, 1200, 2400]
+                grid_spacing = 1200
+
             random.seed(min_y // 120)
             
             for y_step in range(min_y, max_y, 120):
-                if abs(y_step - (-3000)) < 600:
+                if self.current_zone == 'SINGULARITY' and abs(y_step - (-3000)) < 600:
                     continue
                 if y_step > 300:
                     continue
                     
-                if y_step % 600 == 0:
+                if y_step % grid_spacing == 0:
                     # Place a horizontal gate row with some open lanes
-                    open_lanes = [random.randint(0, len(cols)-1), random.randint(0, len(cols)-1)]
+                    open_lanes = [random.randint(0, len(cols)-1)]
                     for col_idx, cx in enumerate(cols):
                         if col_idx not in open_lanes:
                             for wx in [cx - 120, cx, cx + 120]:
@@ -4163,7 +4182,7 @@ class Game:
                 else:
                     # Place vertical corridor walls along the column lines
                     for cx in cols:
-                        if random.random() < 0.65:
+                        if random.random() < 0.60:
                             if not any(abs(obs.x - cx) < 60 and abs(obs.y - y_step) < 60 for obs in self.static_obstacles):
                                 self.static_obstacles.append(FactoryStructure(cx, y_step, 120, 120))
             random.seed()
@@ -5632,6 +5651,15 @@ class Game:
             self.max_y_generated += 1200
 
 
+
+        # Trigger Orion boss spawn after 5 seconds of entering Orion
+        if self.current_zone == 'ORION' and self.boss is None and not getattr(self, 'boss_spawned_orion', False):
+            if current_time - getattr(self, 'level_start_time', 0) > 5000:
+                self.boss = Boss('ORION', self.player.y - 450)
+                self.enemies = []
+                self.meteors = []
+                self.enemy_bullets = []
+                self.boss_spawned_orion = True
 
         # Trigger Boss spawn or direct exit wormhole spawn once player has collected 5 matrix cores
         if self.materials_collected >= 5 and not self.wormhole_spawned and self.boss is None:
