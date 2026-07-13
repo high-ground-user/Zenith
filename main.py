@@ -4115,6 +4115,8 @@ class Game:
         self.level_start_time = pygame.time.get_ticks()
 
     def _procedurally_generate_chunk(self, from_y, to_y):
+        min_y = min(int(from_y), int(to_y))
+        max_y = max(int(from_y), int(to_y))
         # Generate static obstacles as player flies up
         if self.current_zone == 'SINGULARITY':
             # Core Room y coordinate is -3000, x center is 600
@@ -4142,9 +4144,9 @@ class Game:
             
             # Regular corridor grid outside of the Core Room
             cols = [-1800, -1200, -600, 0, 600, 1200, 1800, 2400, 3000]
-            random.seed(int(to_y) // 120)
+            random.seed(min_y // 120)
             
-            for y_step in range(int(to_y), int(from_y), 120):
+            for y_step in range(min_y, max_y, 120):
                 if abs(y_step - (-3000)) < 600:
                     continue
                 if y_step > 300:
@@ -4170,7 +4172,7 @@ class Game:
             num_obstacles = 12
             for _ in range(num_obstacles):
                 ox = random.randint(-2600, 2600)
-                oy = random.randint(int(to_y), int(from_y))
+                oy = random.randint(min_y, max_y)
                 
                 overlap = False
                 for obs in self.static_obstacles:
@@ -4184,7 +4186,7 @@ class Game:
             core_chance = 0.30
             if random.random() < core_chance:
                 cx = random.randint(-2600, 2600)
-                cy = random.randint(int(to_y), int(from_y))
+                cy = random.randint(min_y, max_y)
                 overlap = False
                 for mat in self.materials:
                     if pygame.math.Vector2(cx, cy).distance_to(pygame.math.Vector2(mat.x, mat.y)) < 300:
@@ -4198,7 +4200,7 @@ class Game:
             cell_chance = 0.35
             if random.random() < cell_chance:
                 cx = random.randint(-2600, 2600)
-                cy = random.randint(int(to_y), int(from_y))
+                cy = random.randint(min_y, max_y)
                 overlap = False
                 for cell in self.energy_cells:
                     if pygame.math.Vector2(cx, cy).distance_to(pygame.math.Vector2(cell.x, cell.y)) < 300:
@@ -4209,43 +4211,43 @@ class Game:
         theme_color = BIOME_CONFIGS.get(self.current_zone, {}).get('theme_color', PURPLE)
         for _ in range(random.randint(3, 5)):
             gx = random.randint(-2600, 2600)
-            gy = random.randint(int(to_y), int(from_y))
+            gy = random.randint(min_y, max_y)
             self.gas_clouds.append(GasCloud(gx, gy, theme_color))
             
         num_derelicts = random.randint(1, 3) if self.current_zone in ('ASTEROIDS', 'VULCAN', 'AQUARIS') else random.randint(0, 2)
         for _ in range(num_derelicts):
             dx = random.randint(-2600, 2600)
-            dy = random.randint(int(to_y), int(from_y))
+            dy = random.randint(min_y, max_y)
             self.derelicts.append(DerelictHull(dx, dy))
             
         if random.random() < 0.6:  # 60% chance per chunk
             ax = random.randint(-2600, 2600)
-            ay = random.randint(int(to_y), int(from_y))
+            ay = random.randint(min_y, max_y)
             self.anomalies.append(Anomaly(ax, ay))
                 
         # Spawn level-specific gimmicks
         if self.current_zone == 'AQUARIS':
             for _ in range(random.randint(2, 4)):
                 cx = random.randint(-2600, 2600)
-                cy = random.randint(int(to_y), int(from_y))
+                cy = random.randint(min_y, max_y)
                 self.shield_crystals.append(ShieldCrystal(cx, cy))
         elif self.current_zone == 'ASTEROIDS':
             for _ in range(random.randint(1, 2)):
                 gx = random.randint(-2600, 2600)
-                gy = random.randint(int(to_y), int(from_y))
+                gy = random.randint(min_y, max_y)
                 self.gravity_wells.append(GravityWell(gx, gy))
 
         # Spawn Data Uplink terminals in starting levels
         if self.current_zone in ('ASTEROIDS', 'VULCAN', 'AQUARIS'):
             if random.random() < 0.35:
                 dx = random.randint(-2600, 2600)
-                dy = random.randint(int(to_y), int(from_y))
+                dy = random.randint(min_y, max_y)
                 self.data_uplinks.append(DataUplink(dx, dy))
 
         # Spawn small bypass portals with a 15% chance per chunk
         if random.random() < 0.15:
             px = random.randint(-2600, 2600)
-            py = random.randint(int(to_y), int(from_y))
+            py = random.randint(min_y, max_y)
             self.small_portals.append(SmallPortal(px, py))
 
     def spawn_explosion(self, x, y, color_palette, count=15):
