@@ -185,10 +185,12 @@ class SoundManager:
             return None
 
     def play(self, name):
+        if name in ('warp', 'victory'): return
         if self.enabled and name in self.sounds and self.sounds[name]:
             self.sounds[name].play()
 
     def play_spatial(self, name, source_x, source_y, player_x, player_y):
+        if name in ('warp', 'victory'): return
         if not self.enabled: return
         if name not in self.sounds or not self.sounds[name]: return
         
@@ -3631,7 +3633,7 @@ class Game:
         self.camera_x = 0
         self.screen_shake = 0
         self.debug_invincible = False
-        self.dev_mode = False
+        self.dev_mode = True
         self.tutorial_stage = 0
         self.tutorial_dialogues = [
             {
@@ -5149,40 +5151,6 @@ class Game:
                         self.transition_state = 'INTRO_TO_MAIN_MENU'
                         self.transition_start_time = pygame.time.get_ticks()
                     return
-                if event.key == pygame.K_F3:
-                    self.dev_mode = not self.dev_mode
-                    if self.dev_mode:
-                        self.player.credits += 10000
-                        self.player.scraps += 100
-                        self.debug_invincible = True
-                
-                if event.key == pygame.K_t and getattr(self, 'dev_mode', False):
-                    self.debug_invincible = not self.debug_invincible
-                    if self.debug_invincible:
-                        self.player.credits += 1000000
-                        self.player.scraps += 10000
-
-                if event.key == pygame.K_v and getattr(self, 'dev_mode', False):
-                    self.victory_start_time = pygame.time.get_ticks()
-                    self.escape_sequence_active = False
-                    self.boss_defeated = False
-                    self.wormhole_spawned = False
-                    self.state = 'VICTORY'
-
-                if event.key == pygame.K_b and self.state == 'PLAYING' and self.current_zone != 'HUB' and getattr(self, 'dev_mode', False):
-                    self.materials_collected = 5
-                    cfg = BIOME_CONFIGS.get(self.current_zone, {'boss_count': 0})
-                    if cfg.get('boss_count', 0) > 0:
-                        self.boss = Boss(self.current_zone, self.player.y - 450)
-                        self.enemies = []
-                        self.meteors = []
-                        self.enemy_bullets = []
-                    else:
-                        self.wormhole_pos = pygame.math.Vector2(self.player.x, self.player.y - 450)
-                        self.wormhole_spawned = True
-                        self.boss_defeated = True
-                        self.boss_defeated_time = pygame.time.get_ticks()
-
                 if self.state == 'MAIN_MENU':
                     if self.input_active:
                         if event.key == pygame.K_BACKSPACE:
@@ -9632,27 +9600,82 @@ class Game:
                     self.virtual_screen.blit(flash, (0,0))
 
             else:
-                # PHASE 4: Rift Space & Sequel Teaser (Cockpit View)
-                self.virtual_screen.fill((10, 5, 15))
+                # PHASE 4: Alien Forest Planet (Cockpit View)
+                self.virtual_screen.fill((4, 12, 10)) # Dark teal atmosphere
                 
-                # Distorted purple/green nebula background
+                # Alien sky glow / background nebula
                 neb_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                pygame.draw.circle(neb_surf, (80, 0, 120, 45), (VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 3), 400)
-                pygame.draw.circle(neb_surf, (0, 100, 80, 35), (2 * VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 2), 500)
+                pygame.draw.circle(neb_surf, (20, 60, 50, 50), (VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 3), 400)
+                pygame.draw.circle(neb_surf, (80, 0, 100, 30), (2 * VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 2), 500)
                 self.virtual_screen.blit(neb_surf, (0, 0))
                 
-                # Broken floating portal ring structure
-                ticks = pygame.time.get_ticks()
-                shatter_x = VIRTUAL_WIDTH // 2 + int(10 * math.sin(ticks * 0.001))
-                shatter_y = 220
-                pygame.draw.arc(self.virtual_screen, RED, (shatter_x - 150, shatter_y - 100, 300, 200), 0.2, math.pi * 0.8, width=4)
-                pygame.draw.arc(self.virtual_screen, RED, (shatter_x - 120, shatter_y - 120, 240, 240), math.pi, math.pi * 1.8, width=2)
+                # Double moons
+                # Moon 1 (Luminescent Cyan)
+                m1x, m1y = 920, 140
+                pygame.draw.circle(self.virtual_screen, (100, 255, 230), (m1x, m1y), 45)
+                pygame.draw.circle(self.virtual_screen, (150, 255, 240), (m1x - 10, m1y - 10), 38)
+                # Moon 2 (Smaller, Purple)
+                m2x, m2y = 810, 210
+                pygame.draw.circle(self.virtual_screen, (150, 50, 200), (m2x, m2y), 25)
                 
-                # Sparks erupting from broken portal ring
-                if random.random() < 0.25:
-                    sp_x = shatter_x + random.randint(-150, 150)
-                    sp_y = shatter_y + random.randint(-100, 100)
-                    pygame.draw.circle(self.virtual_screen, YELLOW, (sp_x, sp_y), random.randint(3, 8))
+                # Draw rolling terrain / alien forest floor (overlapping hills)
+                # Back hills (dark indigo)
+                pygame.draw.ellipse(self.virtual_screen, (8, 20, 28), (-200, 480, VIRTUAL_WIDTH + 400, 350))
+                # Mid hills (dark teal/green)
+                pygame.draw.ellipse(self.virtual_screen, (12, 32, 28), (-100, 520, VIRTUAL_WIDTH + 200, 300))
+                # Foreground hills (deep forest floor green)
+                pygame.draw.ellipse(self.virtual_screen, (5, 22, 16), (-150, 560, VIRTUAL_WIDTH + 300, 250))
+                
+                # Draw alien forest trees!
+                random.seed(88)
+                for _ in range(15):
+                    tx = random.randint(100, VIRTUAL_WIDTH - 100)
+                    ty = random.randint(530, 680)
+                    
+                    # Scale based on depth
+                    scale = (ty - 480) / 200.0  # 0.25 to 1.0
+                    t_height = int(240 * scale)
+                    t_width = int(14 * scale)
+                    
+                    # Tree trunk (massive sequoia tapering upward polygon)
+                    base_w = int(t_width * 1.5)
+                    top_w = int(t_width * 0.45)
+                    pygame.draw.polygon(self.virtual_screen, (40, 28, 20), [
+                        (tx - base_w, ty), 
+                        (tx + base_w, ty), 
+                        (tx + top_w, ty - t_height), 
+                        (tx - top_w, ty - t_height)
+                    ])
+                    
+                    # Branches (thick limbs starting high up)
+                    br_w = max(2, int(6 * scale))
+                    pygame.draw.line(self.virtual_screen, (40, 28, 20), (tx, ty - int(t_height * 0.65)), (tx - int(30 * scale), ty - int(t_height * 0.75)), width=br_w)
+                    pygame.draw.line(self.virtual_screen, (40, 28, 20), (tx, ty - int(t_height * 0.70)), (tx + int(35 * scale), ty - int(t_height * 0.80)), width=br_w)
+                    pygame.draw.line(self.virtual_screen, (40, 28, 20), (tx, ty - int(t_height * 0.85)), (tx - int(25 * scale), ty - int(t_height * 0.92)), width=br_w)
+                    pygame.draw.line(self.virtual_screen, (40, 28, 20), (tx, ty - int(t_height * 0.88)), (tx + int(25 * scale), ty - int(t_height * 0.95)), width=br_w)
+                    
+                    # Overlapping foliage colors
+                    c_color = random.choice([
+                        (255, 0, 150), # Neon magenta
+                        (0, 240, 255), # Neon cyan
+                        (200, 80, 255) # Light purple
+                    ])
+                    
+                    def draw_dense_cluster(cx, cy, radius):
+                        for dx, dy in [(0, 0), (-int(5*scale), -int(3*scale)), (int(4*scale), -int(5*scale)), (int(2*scale), int(3*scale))]:
+                            c_x, c_y = cx + dx, cy + dy
+                            pygame.draw.circle(self.virtual_screen, c_color, (c_x, c_y), radius)
+                            pygame.draw.circle(self.virtual_screen, (max(0, c_color[0]-45), max(0, c_color[1]-45), max(0, c_color[2]-45)), (c_x - 2, c_y - 2), int(radius * 0.75))
+                        if random.random() < 0.3:
+                            pygame.draw.circle(self.virtual_screen, WHITE, (cx, cy), int(4 * scale))
+                            
+                    # Draw dense clusters at each branch tip and main crown
+                    draw_dense_cluster(tx, ty - t_height, int(22 * scale))
+                    draw_dense_cluster(tx - int(30 * scale), ty - int(t_height * 0.75), int(16 * scale))
+                    draw_dense_cluster(tx + int(35 * scale), ty - int(t_height * 0.80), int(16 * scale))
+                    draw_dense_cluster(tx - int(25 * scale), ty - int(t_height * 0.92), int(14 * scale))
+                    draw_dense_cluster(tx + int(25 * scale), ty - int(t_height * 0.95), int(14 * scale))
+                random.seed()
                 
                 draw_first_person_cockpit(self.virtual_screen, 4)
                 
