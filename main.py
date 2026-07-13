@@ -4052,7 +4052,8 @@ class Game:
         self.void_enemies_killed = 0
         self.tutorial_stage = 0
         
-        self.highest_y_generated = 600
+        self.min_y_generated = 600
+        self.max_y_generated = 600
         self.materials_spawned_count = 0
         self.wormhole_spawned = False
         self.wormhole_charge_timer = 0
@@ -4168,7 +4169,7 @@ class Game:
             # Generate static obstacles (asteroids) as player flies up
             num_obstacles = 12
             for _ in range(num_obstacles):
-                ox = random.randint(-1800, VIRTUAL_WIDTH + 1800)
+                ox = random.randint(-2600, 2600)
                 oy = random.randint(int(to_y), int(from_y))
                 
                 overlap = False
@@ -4182,7 +4183,7 @@ class Game:
         if self.current_zone == 'ASTEROIDS':
             core_chance = 0.30
             if random.random() < core_chance:
-                cx = random.randint(-2500, VIRTUAL_WIDTH + 2500)
+                cx = random.randint(-2600, 2600)
                 cy = random.randint(int(to_y), int(from_y))
                 overlap = False
                 for mat in self.materials:
@@ -4196,7 +4197,7 @@ class Game:
         if self.current_zone == 'PLASMA':
             cell_chance = 0.35
             if random.random() < cell_chance:
-                cx = random.randint(-1500, VIRTUAL_WIDTH + 1500)
+                cx = random.randint(-2600, 2600)
                 cy = random.randint(int(to_y), int(from_y))
                 overlap = False
                 for cell in self.energy_cells:
@@ -4207,43 +4208,43 @@ class Game:
 
         theme_color = BIOME_CONFIGS.get(self.current_zone, {}).get('theme_color', PURPLE)
         for _ in range(random.randint(3, 5)):
-            gx = random.randint(-500, VIRTUAL_WIDTH + 500)
+            gx = random.randint(-2600, 2600)
             gy = random.randint(int(to_y), int(from_y))
             self.gas_clouds.append(GasCloud(gx, gy, theme_color))
             
         num_derelicts = random.randint(1, 3) if self.current_zone in ('ASTEROIDS', 'VULCAN', 'AQUARIS') else random.randint(0, 2)
         for _ in range(num_derelicts):
-            dx = random.randint(-1500, VIRTUAL_WIDTH + 1500)
+            dx = random.randint(-2600, 2600)
             dy = random.randint(int(to_y), int(from_y))
             self.derelicts.append(DerelictHull(dx, dy))
             
         if random.random() < 0.6:  # 60% chance per chunk
-            ax = random.randint(-1500, VIRTUAL_WIDTH + 1500)
+            ax = random.randint(-2600, 2600)
             ay = random.randint(int(to_y), int(from_y))
             self.anomalies.append(Anomaly(ax, ay))
                 
         # Spawn level-specific gimmicks
         if self.current_zone == 'AQUARIS':
             for _ in range(random.randint(2, 4)):
-                cx = random.randint(-1500, VIRTUAL_WIDTH + 1500)
+                cx = random.randint(-2600, 2600)
                 cy = random.randint(int(to_y), int(from_y))
                 self.shield_crystals.append(ShieldCrystal(cx, cy))
         elif self.current_zone == 'ASTEROIDS':
             for _ in range(random.randint(1, 2)):
-                gx = random.randint(-1500, VIRTUAL_WIDTH + 1500)
+                gx = random.randint(-2600, 2600)
                 gy = random.randint(int(to_y), int(from_y))
                 self.gravity_wells.append(GravityWell(gx, gy))
 
         # Spawn Data Uplink terminals in starting levels
         if self.current_zone in ('ASTEROIDS', 'VULCAN', 'AQUARIS'):
             if random.random() < 0.35:
-                dx = random.randint(-1500, VIRTUAL_WIDTH + 1500)
+                dx = random.randint(-2600, 2600)
                 dy = random.randint(int(to_y), int(from_y))
                 self.data_uplinks.append(DataUplink(dx, dy))
 
         # Spawn small bypass portals with a 15% chance per chunk
         if random.random() < 0.15:
-            px = random.randint(200, VIRTUAL_WIDTH - 200)
+            px = random.randint(-2600, 2600)
             py = random.randint(int(to_y), int(from_y))
             self.small_portals.append(SmallPortal(px, py))
 
@@ -5620,10 +5621,13 @@ class Game:
         self.camera_x += (target_cam_x - self.camera_x) * 0.08
 
         # Procedural surroundings generation on-the-fly!
-        # Every time player advances 1000px up, generate next block
-        if self.player.y - 1200 < self.highest_y_generated:
-            self._procedurally_generate_chunk(self.highest_y_generated, self.highest_y_generated - 1200)
-            self.highest_y_generated -= 1200
+        # Every time player advances 1000px up or down, generate next block
+        if self.player.y - 1200 < self.min_y_generated:
+            self._procedurally_generate_chunk(self.min_y_generated, self.min_y_generated - 1200)
+            self.min_y_generated -= 1200
+        if self.player.y + 1200 > self.max_y_generated:
+            self._procedurally_generate_chunk(self.max_y_generated, self.max_y_generated + 1200)
+            self.max_y_generated += 1200
 
 
 
