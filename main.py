@@ -2004,12 +2004,12 @@ class Enemy:
         if zone == 'TUTORIAL':
             pass
         elif diff_idx > 0:
-            self.health = max(1, self.health + diff_idx // 4)
+            self.health = max(1, self.health + diff_idx // 5)
             if self.shoot_delay < 5000000:
                 self.shoot_delay = max(700, self.shoot_delay - diff_idx * 55)
             self.speed = self.speed * (1.0 + diff_idx * 0.025)
         else:
-            self.health = max(1, self.health + 1)
+            self.health = max(1, self.health)
             if self.shoot_delay < 5000000:
                 self.shoot_delay = max(700, self.shoot_delay - 70)
             self.speed = self.speed * 1.12
@@ -5678,7 +5678,10 @@ class Game:
                     if SOUNDS: SOUNDS.play('victory')
                     self.player.add_credits(250)
                     
-                    # Open-world Exploration progression: Asteroids -> Vulcan -> Aquaris -> Nebula -> Plasma -> Void -> Quantum -> Singularity -> Orion
+                    # Open-world Exploration progression: 
+                    # Hub 1: Asteroids -> Vulcan -> Aquaris (Unlocks Nebula & transitions hub index to 2)
+                    # Hub 2: Nebula -> Plasma -> Singularity (Unlocks Quantum & transitions hub index to 3)
+                    # Hub 3: Quantum -> Void -> Orion (Victory)
                     if self.current_zone == 'ASTEROIDS':
                         self.unlocked_zones['VULCAN'] = True
                         self.escape_sequence_active = False
@@ -5701,22 +5704,22 @@ class Game:
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                     elif self.current_zone == 'PLASMA':
-                        self.unlocked_zones['VOID'] = True
+                        self.unlocked_zones['SINGULARITY'] = True
                         self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
-                    elif self.current_zone == 'VOID':
+                    elif self.current_zone == 'SINGULARITY':
                         self.unlocked_zones['QUANTUM'] = True
                         self.current_hub_index = 3
                         self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
                     elif self.current_zone == 'QUANTUM':
-                        self.unlocked_zones['SINGULARITY'] = True
+                        self.unlocked_zones['VOID'] = True
                         self.escape_sequence_active = False
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
-                    elif self.current_zone == 'SINGULARITY':
+                    elif self.current_zone == 'VOID':
                         self.unlocked_zones['ORION'] = True
                         self.escape_sequence_active = False
                         self.state = 'HUB'
