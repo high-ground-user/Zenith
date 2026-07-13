@@ -2121,7 +2121,7 @@ class Enemy:
                 avoid_force += dist_vec.normalize() * (180 - dist) * 0.04
         self.velocity += avoid_force
 
-        # Pursuit Mode: If player has seen the enemy and is traveling away from it, the enemy gains a pursuit speed boost
+        # Pursuit Mode: If player has seen the enemy, is traveling away, and the enemy is off-screen, it gains a pursuit speed boost
         current_speed = self.speed
         current_accel = self.acceleration
         if getattr(self, 'seen', False):
@@ -2129,7 +2129,8 @@ class Enemy:
             if player_vel.length() > 0.5:
                 to_player_dir = to_player.copy()
                 if to_player_dir.length() > 0:
-                    if player_vel.dot(to_player_dir) > 0:
+                    is_off_screen = (abs(self.x - player.x) > 600 or abs(self.y - player.y) > 450)
+                    if player_vel.dot(to_player_dir) > 0 and is_off_screen:
                         current_speed = max(self.speed, player.max_speed + 0.6)
                         current_accel = self.acceleration * 2.2
 
