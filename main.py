@@ -83,8 +83,8 @@ class SoundManager:
         
         self.sounds['victory'] = self._load_victory_or_synth()
         
-        self.music_ambient = self._load_music_or_synth('ambient', 'ambient')
-        self.music_boss = self._load_music_or_synth('boss', 'boss')
+        self.music_ambient = None
+        self.music_boss = None
         
         self.chan_ambient = None
         self.chan_boss = None
@@ -9303,57 +9303,124 @@ class Game:
         elif self.state == 'VICTORY':
             v_time = current_time - self.victory_start_time
             
+            def draw_first_person_cockpit(screen, state_phase):
+                # 1. Dashboard console panel at the bottom
+                pygame.draw.rect(screen, (15, 18, 22), (0, VIRTUAL_HEIGHT - 180, VIRTUAL_WIDTH, 180))
+                pygame.draw.line(screen, (30, 36, 44), (0, VIRTUAL_HEIGHT - 180), (VIRTUAL_WIDTH, VIRTUAL_HEIGHT - 180), width=4)
+                
+                # 2. Diagonal support canopy struts
+                pygame.draw.polygon(screen, (25, 30, 35), [(0, 0), (60, 0), (180, VIRTUAL_HEIGHT - 180), (0, VIRTUAL_HEIGHT - 180)])
+                pygame.draw.polygon(screen, (25, 30, 35), [(VIRTUAL_WIDTH, 0), (VIRTUAL_WIDTH - 60, 0), (VIRTUAL_WIDTH - 180, VIRTUAL_HEIGHT - 180), (VIRTUAL_WIDTH, VIRTUAL_HEIGHT - 180)])
+                
+                pygame.draw.line(screen, (50, 60, 70), (60, 0), (180, VIRTUAL_HEIGHT - 180), width=2)
+                pygame.draw.line(screen, (50, 60, 70), (VIRTUAL_WIDTH - 60, 0), (VIRTUAL_WIDTH - 180, VIRTUAL_HEIGHT - 180), width=2)
+                
+                # 3. Radar sphere/Compass display
+                radar_cx, radar_cy = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT - 90
+                pygame.draw.circle(screen, (8, 24, 16), (radar_cx, radar_cy), 65)
+                pygame.draw.circle(screen, GREEN if state_phase < 4 else (100, 20, 20), (radar_cx, radar_cy), 65, width=2)
+                pygame.draw.circle(screen, GREEN if state_phase < 4 else (80, 20, 20), (radar_cx, radar_cy), 30, width=1)
+                pygame.draw.line(screen, GREEN if state_phase < 4 else (80, 20, 20), (radar_cx - 65, radar_cy), (radar_cx + 65, radar_cy), width=1)
+                pygame.draw.line(screen, GREEN if state_phase < 4 else (80, 20, 20), (radar_cx, radar_cy - 65), (radar_cx, radar_cy + 65), width=1)
+                
+                ticks = pygame.time.get_ticks()
+                if state_phase < 4:
+                    sweep_ang = ticks * 0.003
+                    sweep_x = radar_cx + int(63 * math.cos(sweep_ang))
+                    sweep_y = radar_cy + int(63 * math.sin(sweep_ang))
+                    pygame.draw.line(screen, (0, 255, 100, 150), (radar_cx, radar_cy), (sweep_x, sweep_y), width=2)
+                
+                # 4. Diagnostic gauges
+                # Left gauge: Engine temp
+                pygame.draw.rect(screen, (10, 12, 15), (260, VIRTUAL_HEIGHT - 130, 120, 25))
+                if state_phase == 1:
+                    gauge_w = int(120 * (0.4 + 0.1 * math.sin(ticks * 0.002)))
+                    gauge_color = GREEN
+                elif state_phase == 2:
+                    gauge_w = int(120 * (0.8 + 0.15 * math.sin(ticks * 0.01)))
+                    gauge_color = RED
+                elif state_phase == 3:
+                    gauge_w = int(120 * (0.95 + 0.05 * random.random()))
+                    gauge_color = RED
+                else:
+                    gauge_w = 0
+                    gauge_color = GRAY
+                if gauge_w > 0:
+                    pygame.draw.rect(screen, gauge_color, (260, VIRTUAL_HEIGHT - 130, gauge_w, 25))
+                pygame.draw.rect(screen, WHITE if state_phase < 4 else GRAY, (260, VIRTUAL_HEIGHT - 130, 120, 25), width=2)
+                lbl_eng = self.small_font.render("ENGINE TEMP", True, WHITE if state_phase < 4 else GRAY)
+                screen.blit(lbl_eng, (260, VIRTUAL_HEIGHT - 155))
+                
+                # Right gauge: Re-entry G force
+                pygame.draw.rect(screen, (10, 12, 15), (VIRTUAL_WIDTH - 380, VIRTUAL_HEIGHT - 130, 120, 25))
+                if state_phase == 1:
+                    gauge_w = int(120 * 0.25)
+                    gauge_color = CYAN
+                elif state_phase == 2:
+                    gauge_w = int(120 * (0.5 + 0.1 * math.sin(ticks * 0.005)))
+                    gauge_color = YELLOW
+                elif state_phase == 3:
+                    gauge_w = int(120 * (0.9 + 0.1 * math.sin(ticks * 0.02)))
+                    gauge_color = ORANGE
+                else:
+                    gauge_w = 0
+                    gauge_color = GRAY
+                if gauge_w > 0:
+                    pygame.draw.rect(screen, gauge_color, (VIRTUAL_WIDTH - 380, VIRTUAL_HEIGHT - 130, gauge_w, 25))
+                pygame.draw.rect(screen, WHITE if state_phase < 4 else GRAY, (VIRTUAL_WIDTH - 380, VIRTUAL_HEIGHT - 130, 120, 25), width=2)
+                lbl_g = self.small_font.render("RE-ENTRY G'S", True, WHITE if state_phase < 4 else GRAY)
+                screen.blit(lbl_g, (VIRTUAL_WIDTH - 380, VIRTUAL_HEIGHT - 155))
+                
+                # Warning status messages
+                if state_phase == 2:
+                    if ticks % 400 < 200:
+                        pygame.draw.circle(screen, RED, (VIRTUAL_WIDTH // 2 - 130, VIRTUAL_HEIGHT - 100), 10)
+                        pygame.draw.circle(screen, RED, (VIRTUAL_WIDTH // 2 + 130, VIRTUAL_HEIGHT - 100), 10)
+                    warn_lbl = self.small_font.render("RE-ENTRY OVERHEAT ALERT", True, RED)
+                    screen.blit(warn_lbl, (VIRTUAL_WIDTH // 2 - warn_lbl.get_width() // 2, VIRTUAL_HEIGHT - 170))
+                elif state_phase == 3:
+                    if ticks % 200 < 100:
+                        pygame.draw.circle(screen, RED, (VIRTUAL_WIDTH // 2 - 130, VIRTUAL_HEIGHT - 100), 10)
+                        pygame.draw.circle(screen, RED, (VIRTUAL_WIDTH // 2 + 130, VIRTUAL_HEIGHT - 100), 10)
+                    warn_lbl = self.small_font.render("CRITICAL ATMOSPHERIC FRICTION", True, RED)
+                    screen.blit(warn_lbl, (VIRTUAL_WIDTH // 2 - warn_lbl.get_width() // 2, VIRTUAL_HEIGHT - 170))
+                elif state_phase == 4:
+                    warn_lbl = self.small_font.render("COCKPIT SYSTEM OFFLINE", True, (150, 30, 30))
+                    screen.blit(warn_lbl, (VIRTUAL_WIDTH // 2 - warn_lbl.get_width() // 2, VIRTUAL_HEIGHT - 170))
+                    
+                    # Draw cockpit canopy glass cracks
+                    pygame.draw.line(screen, (230, 230, 235), (280, 120), (330, 190), width=2)
+                    pygame.draw.line(screen, (230, 230, 235), (330, 190), (310, 260), width=2)
+                    pygame.draw.line(screen, (230, 230, 235), (330, 190), (440, 210), width=1)
+                    pygame.draw.line(screen, (230, 230, 235), (VIRTUAL_WIDTH - 380, 210), (VIRTUAL_WIDTH - 300, 250), width=2)
+                    pygame.draw.line(screen, (230, 230, 235), (VIRTUAL_WIDTH - 300, 250), (VIRTUAL_WIDTH - 330, 320), width=1)
+
             if v_time < 5500:
-                # PHASE 1: Galaxy Liberation & Sector Network restoration
-                self.virtual_screen.fill((4, 8, 16))
+                # PHASE 1: Galaxy Flight (Cockpit View)
+                self.virtual_screen.fill((2, 4, 10))
                 
-                # Draw galaxy nebula glow
-                nebula_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                pygame.draw.circle(nebula_surf, (20, 40, 80, 50), (VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 2), 400)
-                pygame.draw.circle(nebula_surf, (50, 15, 75, 45), (2 * VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 3), 500)
-                self.virtual_screen.blit(nebula_surf, (0, 0))
+                # Draw passing warp starfield outside the canopy window
+                center_x, center_y = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
+                random.seed(99)
+                for j in range(60):
+                    angle = (j * 17.3) % (2 * math.pi)
+                    speed = 15 + (j % 8) * 5
+                    dist = ((v_time * 0.12 * speed) + j * 50) % 700
+                    if dist < 10: continue
+                    sx = center_x + math.cos(angle) * dist
+                    sy = center_y + math.sin(angle) * dist
+                    pygame.draw.circle(self.virtual_screen, (200, 220, 255), (int(sx), int(sy)), max(1, int(dist * 0.005)))
+                random.seed()
                 
-                # Biome sector positions
-                coords = []
-                for i, (name, cfg) in enumerate(BIOME_CONFIGS.items()):
-                    cx = 200 + (i % 3) * 400
-                    cy = 200 + (i // 3) * 230
-                    coords.append((cx, cy))
-                    
-                # Animate restored neural constellation connection lines
-                for j in range(len(coords) - 1):
-                    line_start = j * 450
-                    if v_time > line_start:
-                        progress = min(1.0, (v_time - line_start) / 450.0)
-                        x1, y1 = coords[j]
-                        x2, y2 = coords[j+1]
-                        current_end = (int(x1 + (x2 - x1) * progress), int(y1 + (y2 - y1) * progress))
-                        pygame.draw.line(self.virtual_screen, (0, 255, 120, 150), (x1, y1), current_end, width=2)
-
-                # Draw mini-map of sectors with glowing effects
-                for i, (name, cfg) in enumerate(BIOME_CONFIGS.items()):
-                    cx, cy = coords[i]
-                    color = cfg['theme_color']
-                    pulse = abs(math.sin(current_time * 0.005 + i)) * 12
-                    
-                    # Outer glow
-                    glow_surf = pygame.Surface((120, 120), pygame.SRCALPHA)
-                    pygame.draw.circle(glow_surf, (color[0], color[1], color[2], 30 + int(pulse * 1.5)), (60, 60), 40 + int(pulse))
-                    self.virtual_screen.blit(glow_surf, (cx - 60, cy - 60))
-                    
-                    # Main ring and core
-                    pygame.draw.circle(self.virtual_screen, color, (cx, cy), 30, width=2)
-                    pygame.draw.circle(self.virtual_screen, WHITE, (cx, cy), 4)
-                    
-                    # Lens flare lines
-                    pygame.draw.line(self.virtual_screen, (color[0], color[1], color[2], 120), (cx - 45, cy), (cx + 45, cy), width=1)
-                    pygame.draw.line(self.virtual_screen, (color[0], color[1], color[2], 120), (cx, cy - 45), (cx, cy + 45), width=1)
-                    
-                    # Sector labels
-                    lbl = self.small_font.render(name, True, color)
-                    self.virtual_screen.blit(lbl, (cx - lbl.get_width()//2, cy + 35))
-
-                # Render typewriter telemetry logs
+                # Draw mini neural constellation hologram on dashboard
+                h_surf = pygame.Surface((220, 130), pygame.SRCALPHA)
+                h_surf.fill((0, 255, 100, 20))
+                pygame.draw.rect(h_surf, (0, 255, 120), (0, 0, 220, 130), width=1)
+                h_lbl = self.small_font.render("NET RESTORED: 100%", True, GREEN)
+                h_surf.blit(h_lbl, (10, 10))
+                self.virtual_screen.blit(h_surf, (80, VIRTUAL_HEIGHT - 150))
+                
+                # Telemetry text on dashboard
                 telemetry = [
                     ">> RESTORING ZENITH NETWORK CONNECTION...",
                     ">> SYNAPSE CALIBRATION MATRIX: ESTABLISHED",
@@ -9362,33 +9429,17 @@ class Game:
                 for idx, line in enumerate(telemetry):
                     if v_time > 1200 + idx * 700:
                         t_surf = self.small_font.render(line, True, GREEN)
-                        self.virtual_screen.blit(t_surf, (80, VIRTUAL_HEIGHT - 150 + idx * 25))
-
-                # Player ship flies across the galaxy
-                ship_x = -100 + (v_time / 5500.0) * (VIRTUAL_WIDTH + 200)
-                ship_y = VIRTUAL_HEIGHT // 2 + math.sin(v_time * 0.002) * 100
-                
-                # Engine sparks
-                for _ in range(3):
-                    sp_x = ship_x - 30 - random.randint(0, 40)
-                    sp_y = ship_y + random.randint(-15, 15)
-                    sp_r = random.randint(2, 6)
-                    cls = self.player.class_name if (hasattr(self, 'player') and self.player) else 'RANGER'
-                    sp_color = (0, 255, 255, 150) if cls == 'RANGER' else (255, 120, 0, 150)
-                    sp_surf = pygame.Surface((sp_r*2, sp_r*2), pygame.SRCALPHA)
-                    pygame.draw.circle(sp_surf, sp_color, (sp_r, sp_r), sp_r)
-                    self.virtual_screen.blit(sp_surf, (int(sp_x - sp_r), int(sp_y - sp_r)))
-                
-                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 1.0, 0.0, scale=1.0, thruster_intensity=1.2)
+                        self.virtual_screen.blit(t_surf, (80, 50 + idx * 25))
+                        
+                draw_first_person_cockpit(self.virtual_screen, 1)
                 
                 msg = self.large_font.render("GALAXY LIBERATED", True, WHITE)
-                self.virtual_screen.blit(msg, (VIRTUAL_WIDTH//2 - msg.get_width()//2, 45))
+                self.virtual_screen.blit(msg, (VIRTUAL_WIDTH//2 - msg.get_width()//2, 120))
 
             elif v_time < 9500:
-                # PHASE 2: Hyper-jump Failure & Glitch alerts
+                # PHASE 2: Hyper-jump Failure (Cockpit View)
                 self.virtual_screen.fill(BLACK)
                 
-                # Warp star tunnel effect
                 center_x, center_y = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
                 random.seed(42)
                 for j in range(60):
@@ -9396,105 +9447,61 @@ class Game:
                     speed = 10 + (j % 15) * 5
                     dist = ((v_time * 0.15 * speed) + j * 50) % 800
                     if dist < 20: continue
-                    sx1 = center_x + math.cos(angle) * (dist - speed * 1.5)
-                    sy1 = center_y + math.sin(angle) * (dist - speed * 1.5)
-                    sx2 = center_x + math.cos(angle) * dist
-                    sy2 = center_y + math.sin(angle) * dist
-                    pygame.draw.line(self.virtual_screen, (200, 220, 255), (int(sx1), int(sy1)), (int(sx2), int(sy2)), width=max(1, int(dist * 0.005)))
+                    sx = center_x + math.cos(angle) * dist
+                    sy = center_y + math.sin(angle) * dist
+                    pygame.draw.circle(self.virtual_screen, (255, 200, 200), (int(sx), int(sy)), max(1, int(dist * 0.005)))
                 random.seed()
                 
-                # Draw player ship in the middle shaking violently
-                ship_x = center_x + random.randint(-8, 8)
-                ship_y = center_y + random.randint(-8, 8)
-                
-                # Draw electric arcs discharging from ship core
-                for _ in range(4):
-                    start_pt = (ship_x + random.randint(-20, 20), ship_y + random.randint(-20, 20))
-                    end_pt = (start_pt[0] + random.randint(-90, 90), start_pt[1] + random.randint(-90, 90))
-                    mid_pt = ((start_pt[0] + end_pt[0])//2 + random.randint(-20, 20), (start_pt[1] + end_pt[1])//2 + random.randint(-20, 20))
-                    pygame.draw.line(self.virtual_screen, CYAN, start_pt, mid_pt, 2)
-                    pygame.draw.line(self.virtual_screen, WHITE, mid_pt, end_pt, 2)
-
-                # Reactor critical sparks
-                for _ in range(4):
-                    sp_x = ship_x - 30 - random.randint(0, 30)
-                    sp_y = ship_y + random.randint(-15, 15)
-                    pygame.draw.circle(self.virtual_screen, RED if random.random() > 0.5 else ORANGE, (int(sp_x), int(sp_y)), random.randint(3, 8))
-                
-                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 1.0, 0.0, scale=1.1, thruster_intensity=0.8)
-                
-                # Visual Glitches, Cockpit triangle alarms, & overlay flashing
+                # Visual Glitches & CRT overlay flashing
                 if v_time % 300 < 150:
                     alert_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                    alert_surf.fill((255, 0, 0, 60))
+                    alert_surf.fill((255, 0, 0, 50))
                     self.virtual_screen.blit(alert_surf, (0, 0))
                     
-                    # Cockpit warning triangle
-                    pygame.draw.polygon(self.virtual_screen, RED, [(center_x, center_y - 140), (center_x - 80, center_y - 20), (center_x + 80, center_y - 20)], width=4)
-                    excl = self.large_font.render("!", True, RED)
-                    self.virtual_screen.blit(excl, (center_x - excl.get_width()//2, center_y - 110))
-
+                    # Dashboard warning labels
                     warn = self.large_font.render("REACTOR CORE CRITICAL", True, RED)
-                    self.virtual_screen.blit(warn, (VIRTUAL_WIDTH//2 - warn.get_width()//2, 60))
+                    self.virtual_screen.blit(warn, (VIRTUAL_WIDTH//2 - warn.get_width()//2, 100))
                     
                     system_fail = self.font.render("HYPERDRIVE CORE FAILURE - AUTOMATIC SHUTDOWN", True, WHITE)
-                    self.virtual_screen.blit(system_fail, (VIRTUAL_WIDTH//2 - system_fail.get_width()//2, VIRTUAL_HEIGHT - 120))
+                    self.virtual_screen.blit(system_fail, (VIRTUAL_WIDTH//2 - system_fail.get_width()//2, 200))
                 
-                # Random vertical CRT glitch scanlines
+                # Scanline glitches
                 if random.random() < 0.35:
                     glitch_y = random.randint(0, VIRTUAL_HEIGHT)
-                    pygame.draw.rect(self.virtual_screen, (255, 0, 0, 100), (0, glitch_y, VIRTUAL_WIDTH, random.randint(4, 15)))
-
+                    pygame.draw.rect(self.virtual_screen, (255, 0, 0, 90), (0, glitch_y, VIRTUAL_WIDTH, random.randint(4, 15)))
+                
+                draw_first_person_cockpit(self.virtual_screen, 2)
                 self.screen_shake = 14
 
             elif v_time < 13500:
-                # PHASE 3: Atmospheric Entry & plasma heat shield
+                # PHASE 3: Atmospheric Entry (Cockpit View)
                 entry_time = v_time - 9500
-                self.virtual_screen.fill((25, 42, 32))
+                self.virtual_screen.fill((30, 20, 10))
                 
-                # Moving fire/ash clouds rising
-                for i in range(12):
-                    offset = (entry_time * 1.6 + i * 150) % VIRTUAL_HEIGHT
-                    cloud_w = 400 + (i % 3) * 200
-                    cloud_h = 80 + (i % 2) * 40
-                    cloud_x = (i * 130) % VIRTUAL_WIDTH - cloud_w // 2
-                    cloud_color = (55, 40, 30, 110) if i % 2 == 0 else (40, 60, 45, 110)
-                    cloud_surf = pygame.Surface((cloud_w, cloud_h), pygame.SRCALPHA)
-                    pygame.draw.ellipse(cloud_surf, cloud_color, (0, 0, cloud_w, cloud_h))
-                    self.virtual_screen.blit(cloud_surf, (cloud_x, VIRTUAL_HEIGHT - offset))
-                
-                # Downward streaking ship
-                ship_x = VIRTUAL_WIDTH // 2 + math.sin(v_time * 0.05) * 20
-                ship_y = 80 + (entry_time / 4000.0) * 600
-                
-                # Glowing heat shield/plasma layer at the nose of the ship
-                for r in range(4):
-                    pygame.draw.arc(self.virtual_screen, (255, 80 + r * 45, 0), (int(ship_x - 65 - r*6), int(ship_y + 10), 130 + r*12, 70), 0, math.pi, width=3)
-                
-                # Dense fire and ash sparks shooting upward
-                for _ in range(12):
-                    fx = ship_x + random.randint(-35, 35)
-                    fy = ship_y - random.randint(10, 150)
-                    f_size = random.randint(6, 25)
-                    f_color = (255, random.randint(80, 210), 0) if random.random() < 0.7 else (80, 80, 80)
-                    pygame.draw.circle(self.virtual_screen, f_color, (int(fx), int(fy)), f_size)
+                # Plasma fire licking the canopy glass window from below
+                for _ in range(30):
+                    fx = random.randint(50, VIRTUAL_WIDTH - 50)
+                    fy = VIRTUAL_HEIGHT - 180 - random.randint(0, 380)
+                    f_size = random.randint(20, 70)
+                    f_color = (255, random.randint(60, 180), 0, 120)
+                    f_surf = pygame.Surface((f_size * 2, f_size * 2), pygame.SRCALPHA)
+                    pygame.draw.circle(f_surf, f_color, (f_size, f_size), f_size)
+                    self.virtual_screen.blit(f_surf, (fx - f_size, fy - f_size))
                     
                 # Friction lines
-                for _ in range(15):
-                    lx = random.randint(0, VIRTUAL_WIDTH)
-                    ly = random.randint(0, VIRTUAL_HEIGHT)
-                    llen = random.randint(60, 250)
-                    pygame.draw.line(self.virtual_screen, (255, 180, 80, 90), (lx, ly), (lx, ly - llen), width=1)
+                for _ in range(12):
+                    lx = random.randint(80, VIRTUAL_WIDTH - 80)
+                    ly = random.randint(0, VIRTUAL_HEIGHT - 180)
+                    llen = random.randint(50, 200)
+                    pygame.draw.line(self.virtual_screen, (255, 150, 50, 80), (lx, ly), (lx, ly - llen), width=1)
                 
-                # Draw ship pointing DOWN (0.0, 1.0)
-                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 0.0, 1.0, scale=1.0, damaged=False, thruster_intensity=0.0)
-                
-                # Atmospheric burning overlay
+                # Burning overlay
                 overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((255, 110, 0, min(120, int(entry_time * 0.035))))
+                overlay.fill((255, 80, 0, min(140, int(entry_time * 0.04))))
                 self.virtual_screen.blit(overlay, (0, 0))
                 
-                self.screen_shake = 8
+                draw_first_person_cockpit(self.virtual_screen, 3)
+                self.screen_shake = 10
                 
                 if entry_time > 3700:
                     flash = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
@@ -9502,72 +9509,31 @@ class Game:
                     self.virtual_screen.blit(flash, (0,0))
 
             else:
-                # PHASE 4: Crash Site & Sequel Teaser with Scrolling Credits
-                self.virtual_screen.fill((6, 10, 8))
+                # PHASE 4: Crash Site & Sequel Teaser (Cockpit View)
+                self.virtual_screen.fill((5, 8, 7))
                 
-                # Planet Surface / Hills
-                pygame.draw.ellipse(self.virtual_screen, (12, 22, 15), (-200, 700, VIRTUAL_WIDTH + 400, 400))
-                pygame.draw.ellipse(self.virtual_screen, (18, 30, 22), (-100, 750, VIRTUAL_WIDTH + 200, 300))
+                # Landscape visible through the canopy window
+                pygame.draw.ellipse(self.virtual_screen, (10, 18, 12), (-200, 480, VIRTUAL_WIDTH + 400, 300))
+                pygame.draw.ellipse(self.virtual_screen, (15, 25, 18), (-100, 530, VIRTUAL_WIDTH + 200, 250))
                 
-                # Double Moon system
-                # Moon 1
-                m1x, m1y = 960, 160
+                # Double moons
+                m1x, m1y = 920, 150
                 m1col = (170, 255, 190)
                 for r in range(4):
-                    g_surf = pygame.Surface((240, 240), pygame.SRCALPHA)
-                    pygame.draw.circle(g_surf, (m1col[0], m1col[1], m1col[2], 30 - r * 8), (120, 120), 80 + r * 15)
-                    self.virtual_screen.blit(g_surf, (m1x - 120, m1y - 120))
-                pygame.draw.circle(self.virtual_screen, m1col, (m1x, m1y), 80)
-                # Moon 2 (Smaller)
-                m2x, m2y = 800, 260
+                    g_surf = pygame.Surface((180, 180), pygame.SRCALPHA)
+                    pygame.draw.circle(g_surf, (m1col[0], m1col[1], m1col[2], 25 - r * 6), (90, 90), 60 + r * 12)
+                    self.virtual_screen.blit(g_surf, (m1x - 90, m1y - 90))
+                pygame.draw.circle(self.virtual_screen, m1col, (m1x, m1y), 60)
+                
+                m2x, m2y = 780, 230
                 m2col = (130, 180, 255)
                 for r in range(3):
-                    g_surf = pygame.Surface((120, 120), pygame.SRCALPHA)
-                    pygame.draw.circle(g_surf, (m2col[0], m2col[1], m2col[2], 25 - r * 8), (60, 60), 40 + r * 10)
-                    self.virtual_screen.blit(g_surf, (m2x - 60, m2y - 60))
-                pygame.draw.circle(self.virtual_screen, m2col, (m2x, m2y), 40)
+                    g_surf2 = pygame.Surface((120, 120), pygame.SRCALPHA)
+                    pygame.draw.circle(g_surf2, (m2col[0], m2col[1], m2col[2], 25 - r * 8), (60, 60), 30 + r * 8)
+                    self.virtual_screen.blit(g_surf2, (m2x - 60, m2y - 60))
+                pygame.draw.circle(self.virtual_screen, m2col, (m2x, m2y), 30)
                 
-                # Crashed ship
-                ship_x, ship_y = VIRTUAL_WIDTH // 2, 775
-                
-                # Engine embers burning
-                if random.random() < 0.4:
-                    self.particles.append(Particle(ship_x + random.randint(-20, 20), ship_y + 10, RED))
-                
-                # Heavy Smoke rising
-                for i in range(5):
-                    ticks = pygame.time.get_ticks()
-                    sx = ship_x - 10 + math.sin(ticks * 0.002 + i) * 15
-                    sy = ship_y - (ticks * 0.04 + i * 50) % 250
-                    alpha = max(0, 180 - int(ship_y - sy) * 0.8)
-                    s_surf = pygame.Surface((80, 80), pygame.SRCALPHA)
-                    pygame.draw.circle(s_surf, (80, 85, 80, alpha // 2), (40, 40), 15 + i * 6)
-                    pygame.draw.circle(s_surf, (50, 52, 50, alpha // 3), (40, 40), 25 + i * 8)
-                    self.virtual_screen.blit(s_surf, (int(sx - 40), int(sy - 40)))
-                
-                # Bioluminescent spores
-                random.seed(99)
-                for i in range(25):
-                    px = (i * 63 + pygame.time.get_ticks() * 0.01 * (1 + i % 3)) % VIRTUAL_WIDTH
-                    py = (i * 37 - pygame.time.get_ticks() * 0.005 * (1 + i % 2)) % 650
-                    pulse = 100 + int(100 * math.sin(pygame.time.get_ticks() * 0.003 + i))
-                    p_color = (100, 255, 180, max(0, min(255, pulse)))
-                    pygame.draw.circle(self.virtual_screen, p_color, (int(px), int(py)), 3 + (i % 3))
-                random.seed()
-                
-                # Spark eruptions occasionally
-                if pygame.time.get_ticks() % 1500 < 250:
-                    for _ in range(4):
-                        spx = ship_x + random.randint(-40, 40)
-                        spy = ship_y + random.randint(-10, 20)
-                        pygame.draw.line(self.virtual_screen, (255, 255, 100), (spx, spy), (spx + random.randint(-15, 15), spy - random.randint(10, 25)), width=2)
-                
-                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 1.0, 0.0, scale=1.1, damaged=True, thruster_intensity=0.0, rotation_angle=45)
-                
-                # Atmospheric overlay
-                overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((10, 30, 20, 20))
-                self.virtual_screen.blit(overlay, (0, 0))
+                draw_first_person_cockpit(self.virtual_screen, 4)
 
                 # Dynamic Scrolling Credits Crawl
                 credits_lines = [
