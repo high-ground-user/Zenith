@@ -3396,7 +3396,7 @@ class Player:
                     tip_x = center_x + self.direction.x * (self.height // 2)
                     tip_y = center_y + self.direction.y * (self.height // 2)
                     
-                    b_speed = 18 * getattr(self, 'bullet_speed_mod', 1.0)
+                    b_speed = 26 * getattr(self, 'bullet_speed_mod', 1.0)
 
                     if self.active_primary == 0: # Laser
                         weapon_level = self.get_active_skill('weapon')
@@ -3436,7 +3436,7 @@ class Player:
                         final_heat = 12.0 - (sm * 1.5)
                         for offset in [-20, -10, 0, 10, 20]:
                             r_dir = self.direction.rotate(offset)
-                            projectiles.append(Bullet(tip_x, tip_y, r_dir.x, r_dir.y, speed=15, life=18, damage=0.5 + 0.15*sm, color=ORANGE))
+                            projectiles.append(Bullet(tip_x, tip_y, r_dir.x, r_dir.y, speed=15, life=36, damage=0.5 + 0.15*sm, color=ORANGE))
                         
                         if not is_overdrive:
                             heat_gain = final_heat * (1.25 if is_plasma else 1.0)
