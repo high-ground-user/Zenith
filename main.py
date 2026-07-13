@@ -3356,10 +3356,10 @@ class Player:
             self.y = max(0, min(VIRTUAL_HEIGHT - self.height, self.y))
         else:
             # Wrap around the planet (X-axis) seamlessly
-            map_width = VIRTUAL_WIDTH + 4000
-            if self.x < -2000:
+            map_width = 5200
+            if self.x < -2600:
                 self.x += map_width
-            elif self.x > VIRTUAL_WIDTH + 2000:
+            elif self.x > 2600:
                 self.x -= map_width
             # Constrain player so they cannot fly below the camera's viewport
             self.y = min(self.y, camera_y + VIRTUAL_HEIGHT - self.height)
@@ -5613,7 +5613,7 @@ class Game:
         target_cam_x = self.player.x - VIRTUAL_WIDTH // 2 + self.player.velocity.x * 8
         
         # Prevent camera sliding behavior when player wraps horizontally
-        map_width = VIRTUAL_WIDTH + 4000
+        map_width = 5200
         if target_cam_x - self.camera_x > map_width // 2:
             self.camera_x += map_width
         elif target_cam_x - self.camera_x < -map_width // 2:
@@ -7563,7 +7563,7 @@ class Game:
                 dim = planet_radius * 2
                 temp_planet = pygame.Surface((dim, dim), pygame.SRCALPHA)
                 
-                map_width = VIRTUAL_WIDTH + 4000
+                map_width = 5200
                 orbit_offset = int((self.camera_x * (dim / map_width)) % dim)
                 temp_planet.blit(self.planet_texture, (-orbit_offset, 0))
                 temp_planet.blit(self.planet_texture, (dim - orbit_offset, 0))
