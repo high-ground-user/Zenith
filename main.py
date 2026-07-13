@@ -726,7 +726,7 @@ class ProxBomb:
         self.exploded = False
         self.explosion_timer = 0
         self.explosion_duration = 30
-        self.explosion_radius = int(75 * scale)
+        self.explosion_radius = int(160 * scale)
         
     def update(self):
         if self.exploded:
@@ -2934,8 +2934,8 @@ class Player:
         
         self.max_torpedo_ammo = 10
         self.torpedo_ammo = 10
-        self.max_bomb_ammo = 5
-        self.bomb_ammo = 5
+        self.max_bomb_ammo = 10
+        self.bomb_ammo = 10
         self.max_missile_ammo = 8
         self.missile_ammo = 8
         
@@ -3147,7 +3147,7 @@ class Player:
         # Recalculate max ammo based on ammo_loader skill
         bonus_ammo = self.get_active_skill('ammo_loader') * 2
         self.max_torpedo_ammo = 10 + bonus_ammo
-        self.max_bomb_ammo = 5 + bonus_ammo
+        self.max_bomb_ammo = 10 + bonus_ammo
         self.max_missile_ammo = 8 + bonus_ammo
 
         self.max_shields = self.base_max_shields + self.get_active_skill('shield')
