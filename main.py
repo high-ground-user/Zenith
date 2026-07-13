@@ -4031,7 +4031,7 @@ class Game:
         self.supernova_y = None
         if zone_name == 'NEBULA':
             self.supernova_y = 1200
-            self.supernova_speed = 1.6
+            self.supernova_speed = 3.0
             
         self.energy_cells = []
         self.energy_cells_collected = 0
