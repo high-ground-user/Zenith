@@ -3624,6 +3624,7 @@ class Game:
         self.selected_class = 'RANGER'
         self.camera_y = 0
         self.camera_x = 0
+        self.screen_shake = 0
         self.debug_invincible = False
         self.dev_mode = False
         self.tutorial_stage = 0
