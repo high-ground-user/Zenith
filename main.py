@@ -4665,11 +4665,10 @@ class Game:
                         self.input_active = True
                     elif continue_btn.collidepoint(vmx, vmy):
                         self.player_name = self.player_name.strip()
-                        if self.player_name == "":
-                            self.player_name = "CAPTAIN"
-                        self.input_active = False
-                        self.player.name = self.player_name
-                        self.state = 'CLASS_SELECT'
+                        if self.player_name != "":
+                            self.input_active = False
+                            self.player.name = self.player_name
+                            self.state = 'CLASS_SELECT'
                     else:
                         self.input_active = False
                         
@@ -4684,7 +4683,7 @@ class Game:
                     launch_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 150, 740, 300, 60)
                     if launch_btn.collidepoint(vmx, vmy):
                         self.reset_game()
-                        self.player.name = self.player_name.strip() if self.player_name.strip() else "CAPTAIN"
+                        self.player.name = self.player_name.strip()
                         self.player.set_class(self.selected_class)
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
@@ -5190,20 +5189,18 @@ class Game:
                             self.player_name = self.player_name[:-1]
                         elif event.key == pygame.K_RETURN:
                             self.player_name = self.player_name.strip()
-                            if self.player_name == "":
-                                self.player_name = "CAPTAIN"
-                            self.input_active = False
-                            self.player.name = self.player_name
-                            self.state = 'CLASS_SELECT'
+                            if self.player_name != "":
+                                self.input_active = False
+                                self.player.name = self.player_name
+                                self.state = 'CLASS_SELECT'
                         elif len(self.player_name) < 24:
                             self.player_name += event.unicode.upper()
                     else:
                         if event.key in (pygame.K_SPACE, pygame.K_RETURN):
                             self.player_name = self.player_name.strip()
-                            if self.player_name == "":
-                                self.player_name = "CAPTAIN"
-                            self.player.name = self.player_name
-                            self.state = 'CLASS_SELECT'
+                            if self.player_name != "":
+                                self.player.name = self.player_name
+                                self.state = 'CLASS_SELECT'
                             
                 elif self.state == 'CLASS_SELECT':
                     if event.key in (pygame.K_1, pygame.K_2, pygame.K_3, pygame.K_4, pygame.K_5):
@@ -5220,7 +5217,7 @@ class Game:
                         self.player.set_class(self.selected_class)
                     elif event.key in (pygame.K_SPACE, pygame.K_RETURN):
                         self.reset_game()
-                        self.player.name = self.player_name.strip() if self.player_name.strip() else "CAPTAIN"
+                        self.player.name = self.player_name.strip()
                         self.player.set_class(self.selected_class)
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
@@ -7404,10 +7401,22 @@ class Game:
             surf.blit(name_surf, name_rect)
             
             continue_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 100, 430, 200, 50)
-            btn_color = CYAN if continue_btn.collidepoint(vmx, vmy) else BLUE
+            is_valid = self.player_name.strip() != ""
+            
+            if is_valid:
+                btn_color = CYAN if continue_btn.collidepoint(vmx, vmy) else BLUE
+                border_color = WHITE
+                text_color = BLACK if btn_color == CYAN else WHITE
+                btn_text = "CONTINUE"
+            else:
+                btn_color = (40, 40, 40)
+                border_color = SLATE_GRAY
+                text_color = GRAY
+                btn_text = "ENTER NAME"
+                
             pygame.draw.rect(surf, btn_color, continue_btn, border_radius=8)
-            pygame.draw.rect(surf, WHITE, continue_btn, width=1, border_radius=8)
-            btn_lbl = self.font.render("CONTINUE", True, BLACK if btn_color == CYAN else WHITE)
+            pygame.draw.rect(surf, border_color, continue_btn, width=1, border_radius=8)
+            btn_lbl = self.font.render(btn_text, True, text_color)
             surf.blit(btn_lbl, (continue_btn.centerx - btn_lbl.get_width() // 2, continue_btn.centery - btn_lbl.get_height() // 2))
 
             controls_box = pygame.Rect(VIRTUAL_WIDTH // 2 - 260, 500, 520, 360)
