@@ -1408,7 +1408,8 @@ class DataUplink:
 
 class SubBossEntity:
     def __init__(self, name, max_health, color, width, height, x_offset, y_offset, behavior_type):
-        self.name = name
+        self.is_stabilizer = "STABILIZER" in name.upper()
+        self.name = ""
         self.max_health = max_health
         self.health = max_health
         self.color = color
@@ -1452,7 +1453,7 @@ class SubBossEntity:
         draw_x = self.x - camera_x
         draw_y = self.y - camera_y
         
-        if "STABILIZER" in self.name.upper() or "REACTOR" in self.name.upper():
+        if getattr(self, 'is_stabilizer', False):
             # Draw factory stabilizer/generator
             # Circular outer ring with rotating energy nodes
             pygame.draw.circle(screen, (30, 30, 32), (int(draw_x), int(draw_y)), self.width // 2, width=1)
@@ -1525,7 +1526,7 @@ class Boss:
         
         # Retrieve config
         cfg = BIOME_CONFIGS.get(zone, {'name': 'UNKNOWN', 'theme_color': RED, 'boss_count': 1})
-        self.name = cfg['name'].upper()
+        self.name = ""
         self.color = cfg['theme_color']
         self.boss_count = cfg['boss_count']
         
@@ -1841,8 +1842,7 @@ class Boss:
         pygame.draw.rect(screen, RED, (bar_x, bar_y, int(bar_width * health_ratio), bar_height), border_radius=3)
         pygame.draw.rect(screen, WHITE, (bar_x, bar_y, bar_width, bar_height), width=1, border_radius=3)
         
-        name_lbl = pygame.font.SysFont("Arial", 16, bold=True).render(self.name, True, WHITE)
-        screen.blit(name_lbl, (VIRTUAL_WIDTH // 2 - name_lbl.get_width() // 2, bar_y - 24))
+        pass
 
 class Enemy:
     def __init__(self, x, y, zone='PLAYING', subtype=None):
@@ -2025,6 +2025,7 @@ class Enemy:
                 self.shoot_delay = max(700, self.shoot_delay - 70)
             self.speed = self.speed * 1.12
             
+        self.name = ""
         self.max_health = self.health
         if zone in BIOME_CONFIGS and zone not in ('AQUARIS', 'VULCAN', 'ASTEROIDS'):
             self.color = BIOME_CONFIGS[zone]['theme_color']
@@ -2338,15 +2339,7 @@ class Enemy:
             health_ratio = max(0.0, min(1.0, self.health / self.max_health))
             pygame.draw.rect(screen, GREEN, (draw_rect.x, draw_rect.y - 6, int(self.width * health_ratio), 4))
             
-        if hasattr(self, 'name'):
-            if not hasattr(self, 'name_font'):
-                self.name_font = pygame.font.SysFont("Arial", 10, bold=True)
-            name_surf = self.name_font.render(self.name, True, WHITE)
-            y_offset = 12 if has_health_bar else 6
-            name_rect = name_surf.get_rect(centerx=int(draw_x + self.width // 2), bottom=draw_y - y_offset)
-            bg_rect = name_rect.inflate(4, 2)
-            pygame.draw.rect(screen, (20, 20, 20), bg_rect)
-            screen.blit(name_surf, name_rect)
+            pass
 
 class Meteor:
     def __init__(self, x, y, speed_y=None, speed_x=None, is_static=False):
