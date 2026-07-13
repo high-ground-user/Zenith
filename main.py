@@ -9399,16 +9399,16 @@ class Game:
                     pygame.draw.line(screen, (0, 255, 100, 150), (radar_cx, radar_cy), (sweep_x, sweep_y), width=2)
                 
                 # 4. Diagnostic gauges
-                # Left gauge: Engine temp
+                # Left gauge: Portal Charge
                 pygame.draw.rect(screen, (10, 12, 15), (260, VIRTUAL_HEIGHT - 130, 120, 25))
                 if state_phase == 1:
-                    gauge_w = int(120 * (0.4 + 0.1 * math.sin(ticks * 0.002)))
+                    gauge_w = int(120 * (0.8 + 0.1 * math.sin(ticks * 0.002)))
                     gauge_color = GREEN
                 elif state_phase == 2:
-                    gauge_w = int(120 * (0.8 + 0.15 * math.sin(ticks * 0.01)))
+                    gauge_w = int(120 * (0.4 + 0.15 * math.sin(ticks * 0.01)))
                     gauge_color = RED
                 elif state_phase == 3:
-                    gauge_w = int(120 * (0.95 + 0.05 * random.random()))
+                    gauge_w = int(120 * (0.05 + 0.05 * random.random()))
                     gauge_color = RED
                 else:
                     gauge_w = 0
@@ -9416,19 +9416,19 @@ class Game:
                 if gauge_w > 0:
                     pygame.draw.rect(screen, gauge_color, (260, VIRTUAL_HEIGHT - 130, gauge_w, 25))
                 pygame.draw.rect(screen, WHITE if state_phase < 4 else GRAY, (260, VIRTUAL_HEIGHT - 130, 120, 25), width=2)
-                lbl_eng = self.small_font.render("ENGINE TEMP", True, WHITE if state_phase < 4 else GRAY)
+                lbl_eng = self.small_font.render("PORTAL CHARGE", True, WHITE if state_phase < 4 else GRAY)
                 screen.blit(lbl_eng, (260, VIRTUAL_HEIGHT - 155))
                 
-                # Right gauge: Re-entry G force
+                # Right gauge: Gate Sync / Vector drift
                 pygame.draw.rect(screen, (10, 12, 15), (VIRTUAL_WIDTH - 380, VIRTUAL_HEIGHT - 130, 120, 25))
                 if state_phase == 1:
-                    gauge_w = int(120 * 0.25)
+                    gauge_w = int(120 * 0.9)
                     gauge_color = CYAN
                 elif state_phase == 2:
-                    gauge_w = int(120 * (0.5 + 0.1 * math.sin(ticks * 0.005)))
+                    gauge_w = int(120 * (0.3 + 0.1 * math.sin(ticks * 0.005)))
                     gauge_color = YELLOW
                 elif state_phase == 3:
-                    gauge_w = int(120 * (0.9 + 0.1 * math.sin(ticks * 0.02)))
+                    gauge_w = int(120 * (0.05 + 0.05 * math.sin(ticks * 0.02)))
                     gauge_color = ORANGE
                 else:
                     gauge_w = 0
@@ -9436,7 +9436,7 @@ class Game:
                 if gauge_w > 0:
                     pygame.draw.rect(screen, gauge_color, (VIRTUAL_WIDTH - 380, VIRTUAL_HEIGHT - 130, gauge_w, 25))
                 pygame.draw.rect(screen, WHITE if state_phase < 4 else GRAY, (VIRTUAL_WIDTH - 380, VIRTUAL_HEIGHT - 130, 120, 25), width=2)
-                lbl_g = self.small_font.render("RE-ENTRY G'S", True, WHITE if state_phase < 4 else GRAY)
+                lbl_g = self.small_font.render("GATE SYNC", True, WHITE if state_phase < 4 else GRAY)
                 screen.blit(lbl_g, (VIRTUAL_WIDTH - 380, VIRTUAL_HEIGHT - 155))
                 
                 # Warning status messages
@@ -9444,13 +9444,13 @@ class Game:
                     if ticks % 400 < 200:
                         pygame.draw.circle(screen, RED, (VIRTUAL_WIDTH // 2 - 130, VIRTUAL_HEIGHT - 100), 10)
                         pygame.draw.circle(screen, RED, (VIRTUAL_WIDTH // 2 + 130, VIRTUAL_HEIGHT - 100), 10)
-                    warn_lbl = self.small_font.render("RE-ENTRY OVERHEAT ALERT", True, RED)
+                    warn_lbl = self.small_font.render("PORTAL COLLAPSE ALERT", True, RED)
                     screen.blit(warn_lbl, (VIRTUAL_WIDTH // 2 - warn_lbl.get_width() // 2, VIRTUAL_HEIGHT - 170))
                 elif state_phase == 3:
                     if ticks % 200 < 100:
                         pygame.draw.circle(screen, RED, (VIRTUAL_WIDTH // 2 - 130, VIRTUAL_HEIGHT - 100), 10)
                         pygame.draw.circle(screen, RED, (VIRTUAL_WIDTH // 2 + 130, VIRTUAL_HEIGHT - 100), 10)
-                    warn_lbl = self.small_font.render("CRITICAL ATMOSPHERIC FRICTION", True, RED)
+                    warn_lbl = self.small_font.render("CRITICAL DIMENSIONAL TURBULENCE", True, RED)
                     screen.blit(warn_lbl, (VIRTUAL_WIDTH // 2 - warn_lbl.get_width() // 2, VIRTUAL_HEIGHT - 170))
                 elif state_phase == 4:
                     warn_lbl = self.small_font.render("COCKPIT SYSTEM OFFLINE", True, (150, 30, 30))
@@ -9467,18 +9467,22 @@ class Game:
                 # PHASE 1: Galaxy Flight (Cockpit View)
                 self.virtual_screen.fill((2, 4, 10))
                 
-                # Draw passing warp starfield outside the canopy window
+                # Swirling Portal ring getting larger
                 center_x, center_y = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
-                random.seed(99)
-                for j in range(60):
-                    angle = (j * 17.3) % (2 * math.pi)
-                    speed = 15 + (j % 8) * 5
-                    dist = ((v_time * 0.12 * speed) + j * 50) % 700
-                    if dist < 10: continue
-                    sx = center_x + math.cos(angle) * dist
-                    sy = center_y + math.sin(angle) * dist
-                    pygame.draw.circle(self.virtual_screen, (200, 220, 255), (int(sx), int(sy)), max(1, int(dist * 0.005)))
-                random.seed()
+                portal_radius = int(50 + (v_time / 5500.0) * 450)
+                
+                # Render glowing portal circles
+                ticks = pygame.time.get_ticks()
+                portal_color = CYAN if v_time < 4200 else RED  # portal collapses / turns red near the end of phase 1!
+                
+                for r in range(4):
+                    pygame.draw.circle(self.virtual_screen, portal_color, (center_x, center_y), portal_radius + r * 15, width=2)
+                
+                for angle in range(0, 360, 30):
+                    rad = math.radians(angle + ticks * 0.05)
+                    px = center_x + portal_radius * math.cos(rad)
+                    py = center_y + portal_radius * math.sin(rad)
+                    pygame.draw.line(self.virtual_screen, portal_color, (center_x, center_y), (int(px), int(py)), 1)
                 
                 # Draw mini neural constellation hologram on dashboard
                 h_surf = pygame.Surface((220, 130), pygame.SRCALPHA)
@@ -9490,13 +9494,13 @@ class Game:
                 
                 # Telemetry text on dashboard
                 telemetry = [
-                    ">> RESTORING ZENITH NETWORK CONNECTION...",
-                    ">> SYNAPSE CALIBRATION MATRIX: ESTABLISHED",
-                    ">> SECURE PROTOCOLS ONLINE // THREAT ELIMINATED."
+                    ">> TARGET SECTOR WARP GATES LINKED...",
+                    ">> INITIATING TRANS-DIMENSIONAL JUMP PROTOCOL",
+                    ">> WARNING: GEOMETRICAL DRIFT DETECTED IN CORE RIFT..."
                 ]
                 for idx, line in enumerate(telemetry):
                     if v_time > 1200 + idx * 700:
-                        t_surf = self.small_font.render(line, True, GREEN)
+                        t_surf = self.small_font.render(line, True, GREEN if v_time < 4200 else RED)
                         self.virtual_screen.blit(t_surf, (80, 50 + idx * 25))
                         
                 draw_first_person_cockpit(self.virtual_screen, 1)
@@ -9508,16 +9512,19 @@ class Game:
                 # PHASE 2: Hyper-jump Failure (Cockpit View)
                 self.virtual_screen.fill(BLACK)
                 
+                # Unstable distorted crimson hyper-warp vortex
                 center_x, center_y = VIRTUAL_WIDTH // 2, VIRTUAL_HEIGHT // 2
+                ticks = pygame.time.get_ticks()
                 random.seed(42)
                 for j in range(60):
-                    angle = (j * 13.7) % (2 * math.pi)
-                    speed = 10 + (j % 15) * 5
-                    dist = ((v_time * 0.15 * speed) + j * 50) % 800
+                    angle = (j * 13.7 + ticks * 0.01) % (2 * math.pi)
+                    speed = 12 + (j % 12) * 6
+                    dist = ((v_time * 0.18 * speed) + j * 45) % 800
                     if dist < 20: continue
-                    sx = center_x + math.cos(angle) * dist
-                    sy = center_y + math.sin(angle) * dist
-                    pygame.draw.circle(self.virtual_screen, (255, 200, 200), (int(sx), int(sy)), max(1, int(dist * 0.005)))
+                    distort = math.sin(ticks * 0.005 + j) * 60
+                    sx = center_x + distort + math.cos(angle) * dist
+                    sy = center_y + distort + math.sin(angle) * dist
+                    pygame.draw.circle(self.virtual_screen, (255, 30, j % 150), (int(sx), int(sy)), max(2, int(dist * 0.005)))
                 random.seed()
                 
                 # Visual Glitches & CRT overlay flashing
@@ -9527,10 +9534,10 @@ class Game:
                     self.virtual_screen.blit(alert_surf, (0, 0))
                     
                     # Dashboard warning labels
-                    warn = self.large_font.render("REACTOR CORE CRITICAL", True, RED)
+                    warn = self.large_font.render("PORTAL COLLAPSE", True, RED)
                     self.virtual_screen.blit(warn, (VIRTUAL_WIDTH//2 - warn.get_width()//2, 100))
                     
-                    system_fail = self.font.render("HYPERDRIVE CORE FAILURE - AUTOMATIC SHUTDOWN", True, WHITE)
+                    system_fail = self.font.render("SINGULARITY DRIFT DETECTED // PROTOCOL RUPTURED", True, WHITE)
                     self.virtual_screen.blit(system_fail, (VIRTUAL_WIDTH//2 - system_fail.get_width()//2, 200))
                 
                 # Scanline glitches
@@ -9542,30 +9549,31 @@ class Game:
                 self.screen_shake = 14
 
             elif v_time < 13500:
-                # PHASE 3: Atmospheric Entry (Cockpit View)
+                # PHASE 3: Dimensional Turbulence (Cockpit View)
                 entry_time = v_time - 9500
-                self.virtual_screen.fill((30, 20, 10))
+                self.virtual_screen.fill((20, 5, 25))
                 
-                # Plasma fire licking the canopy glass window from below
-                for _ in range(30):
+                # Torn dimensional tempest colors rising
+                for _ in range(25):
                     fx = random.randint(50, VIRTUAL_WIDTH - 50)
                     fy = VIRTUAL_HEIGHT - 180 - random.randint(0, 380)
                     f_size = random.randint(20, 70)
-                    f_color = (255, random.randint(60, 180), 0, 120)
+                    f_color = (random.choice([150, 220]), 0, random.choice([200, 255]), 110)
                     f_surf = pygame.Surface((f_size * 2, f_size * 2), pygame.SRCALPHA)
                     pygame.draw.circle(f_surf, f_color, (f_size, f_size), f_size)
                     self.virtual_screen.blit(f_surf, (fx - f_size, fy - f_size))
                     
-                # Friction lines
-                for _ in range(12):
-                    lx = random.randint(80, VIRTUAL_WIDTH - 80)
-                    ly = random.randint(0, VIRTUAL_HEIGHT - 180)
-                    llen = random.randint(50, 200)
-                    pygame.draw.line(self.virtual_screen, (255, 150, 50, 80), (lx, ly), (lx, ly - llen), width=1)
+                # Electrical arcs outside the canopy
+                if random.random() < 0.4:
+                    px1 = random.randint(100, VIRTUAL_WIDTH - 100)
+                    py1 = random.randint(50, VIRTUAL_HEIGHT - 220)
+                    px2 = px1 + random.randint(-150, 150)
+                    py2 = py1 + random.randint(-100, 100)
+                    pygame.draw.line(self.virtual_screen, (100, 255, 255), (px1, py1), (px2, py2), width=3)
                 
-                # Burning overlay
+                # Burning/Turbulence overlay
                 overlay = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
-                overlay.fill((255, 80, 0, min(140, int(entry_time * 0.04))))
+                overlay.fill((200, 0, 255, min(140, int(entry_time * 0.04))))
                 self.virtual_screen.blit(overlay, (0, 0))
                 
                 draw_first_person_cockpit(self.virtual_screen, 3)
@@ -9577,72 +9585,45 @@ class Game:
                     self.virtual_screen.blit(flash, (0,0))
 
             else:
-                # PHASE 4: Crash Site & Sequel Teaser (Cockpit View)
-                self.virtual_screen.fill((5, 8, 7))
+                # PHASE 4: Rift Space & Sequel Teaser (Cockpit View)
+                self.virtual_screen.fill((10, 5, 15))
                 
-                # Landscape visible through the canopy window
-                pygame.draw.ellipse(self.virtual_screen, (10, 18, 12), (-200, 480, VIRTUAL_WIDTH + 400, 300))
-                pygame.draw.ellipse(self.virtual_screen, (15, 25, 18), (-100, 530, VIRTUAL_WIDTH + 200, 250))
+                # Distorted purple/green nebula background
+                neb_surf = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+                pygame.draw.circle(neb_surf, (80, 0, 120, 45), (VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 3), 400)
+                pygame.draw.circle(neb_surf, (0, 100, 80, 35), (2 * VIRTUAL_WIDTH // 3, VIRTUAL_HEIGHT // 2), 500)
+                self.virtual_screen.blit(neb_surf, (0, 0))
                 
-                # Double moons
-                m1x, m1y = 920, 150
-                m1col = (170, 255, 190)
-                for r in range(4):
-                    g_surf = pygame.Surface((180, 180), pygame.SRCALPHA)
-                    pygame.draw.circle(g_surf, (m1col[0], m1col[1], m1col[2], 25 - r * 6), (90, 90), 60 + r * 12)
-                    self.virtual_screen.blit(g_surf, (m1x - 90, m1y - 90))
-                pygame.draw.circle(self.virtual_screen, m1col, (m1x, m1y), 60)
+                # Broken floating portal ring structure
+                ticks = pygame.time.get_ticks()
+                shatter_x = VIRTUAL_WIDTH // 2 + int(10 * math.sin(ticks * 0.001))
+                shatter_y = 220
+                pygame.draw.arc(self.virtual_screen, RED, (shatter_x - 150, shatter_y - 100, 300, 200), 0.2, math.pi * 0.8, width=4)
+                pygame.draw.arc(self.virtual_screen, RED, (shatter_x - 120, shatter_y - 120, 240, 240), math.pi, math.pi * 1.8, width=2)
                 
-                m2x, m2y = 780, 230
-                m2col = (130, 180, 255)
-                for r in range(3):
-                    g_surf2 = pygame.Surface((120, 120), pygame.SRCALPHA)
-                    pygame.draw.circle(g_surf2, (m2col[0], m2col[1], m2col[2], 25 - r * 8), (60, 60), 30 + r * 8)
-                    self.virtual_screen.blit(g_surf2, (m2x - 60, m2y - 60))
-                pygame.draw.circle(self.virtual_screen, m2col, (m2x, m2y), 30)
+                # Sparks erupting from broken portal ring
+                if random.random() < 0.25:
+                    sp_x = shatter_x + random.randint(-150, 150)
+                    sp_y = shatter_y + random.randint(-100, 100)
+                    pygame.draw.circle(self.virtual_screen, YELLOW, (sp_x, sp_y), random.randint(3, 8))
                 
                 draw_first_person_cockpit(self.virtual_screen, 4)
-
-                # Dynamic Scrolling Credits Crawl
-                credits_lines = [
-                    "ZENITH: LIBERATION",
-                    "",
-                    "CREATED BY",
-                    "YOU",
-                    "",
-                    "CO-DEVELOPED WITH",
-                    "ADVANCED AI CO-PILOT",
-                    "",
-                    "TO BE CONTINUED IN ZENITH: NEW FRONTIER"
-                ]
                 
-                scroll_speed = 0.08
-                scroll_y_start = VIRTUAL_HEIGHT + 50
-                scroll_y = scroll_y_start - (v_time - 13500) * scroll_speed
-                
-                for idx, line in enumerate(credits_lines):
-                    ly = scroll_y + idx * 38
-                    if -50 < ly < VIRTUAL_HEIGHT + 50:
-                        text_color = CYAN if idx in (0, 2, 5, 8) else WHITE
-                        c_surf = self.font.render(line, True, text_color)
-                        self.virtual_screen.blit(c_surf, (VIRTUAL_WIDTH // 2 - c_surf.get_width() // 2, int(ly)))
-
                 # UI Teaser reveal
                 if v_time > 26000:
                     alpha = min(255, (v_time - 26000) // 10)
                     teaser_surf = self.large_font.render("ZENITH", True, (0, 255, 255))
                     teaser_surf.set_alpha(alpha)
-                    self.virtual_screen.blit(teaser_surf, (VIRTUAL_WIDTH//2 - teaser_surf.get_width()//2, VIRTUAL_HEIGHT//2 - 80))
+                    self.virtual_screen.blit(teaser_surf, (VIRTUAL_WIDTH//2 - teaser_surf.get_width()//2, VIRTUAL_HEIGHT//2 - 120))
                     
                     sub_surf = self.font.render("NEW FRONTIER", True, (255, 255, 255))
                     sub_surf.set_alpha(alpha)
-                    self.virtual_screen.blit(sub_surf, (VIRTUAL_WIDTH//2 - sub_surf.get_width()//2, VIRTUAL_HEIGHT//2))
+                    self.virtual_screen.blit(sub_surf, (VIRTUAL_WIDTH//2 - sub_surf.get_width()//2, VIRTUAL_HEIGHT//2 - 40))
                     
                     coming_surf = self.small_font.render("Coming Soon...", True, GRAY)
                     coming_surf.set_alpha(alpha)
-                    self.virtual_screen.blit(coming_surf, (VIRTUAL_WIDTH//2 - coming_surf.get_width()//2, VIRTUAL_HEIGHT//2 + 50))
-
-                # Final interaction hints
+                    self.virtual_screen.blit(coming_surf, (VIRTUAL_WIDTH//2 - coming_surf.get_width()//2, VIRTUAL_HEIGHT//2 + 10))
+                
                 if v_time > 18000:
                     retry_msg = self.small_font.render("Press R to Restart Exploration", True, (100, 100, 100))
                     self.virtual_screen.blit(retry_msg, (VIRTUAL_WIDTH // 2 - retry_msg.get_width() // 2, VIRTUAL_HEIGHT - 60))
