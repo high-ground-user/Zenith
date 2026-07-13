@@ -4582,6 +4582,44 @@ class Game:
                 vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
                 vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
                 
+                if getattr(self, 'dev_mode', False):
+                    panel_x = VIRTUAL_WIDTH - 230
+                    panel_y = 20
+                    panel_w = 210
+                    
+                    btn_invincible = pygame.Rect(panel_x + 10, panel_y + 45, panel_w - 20, 35)
+                    btn_resources = pygame.Rect(panel_x + 10, panel_y + 95, panel_w - 20, 35)
+                    btn_skip_level = pygame.Rect(panel_x + 10, panel_y + 145, panel_w - 20, 35)
+                    btn_skip_ending = pygame.Rect(panel_x + 10, panel_y + 195, panel_w - 20, 35)
+                    
+                    if btn_invincible.collidepoint(vmx, vmy):
+                        self.debug_invincible = not getattr(self, 'debug_invincible', False)
+                        if SOUNDS: SOUNDS.play('upgrade')
+                        return
+                    elif btn_resources.collidepoint(vmx, vmy):
+                        self.player.credits += 1000000
+                        self.player.scraps += 100000
+                        if SOUNDS: SOUNDS.play('purchase')
+                        return
+                    elif btn_skip_level.collidepoint(vmx, vmy):
+                        if self.state == 'PLAYING' and self.current_zone != 'HUB':
+                            self.boss_defeated = True
+                            self.boss_defeated_time = pygame.time.get_ticks()
+                            self.wormhole_pos = pygame.math.Vector2(self.player.x, self.player.y - 300)
+                            self.wormhole_spawned = True
+                            if self.boss:
+                                self.boss.is_dead = True
+                            if SOUNDS: SOUNDS.play('warp')
+                        return
+                    elif btn_skip_ending.collidepoint(vmx, vmy):
+                        self.victory_start_time = pygame.time.get_ticks()
+                        self.escape_sequence_active = False
+                        self.boss_defeated = False
+                        self.wormhole_spawned = False
+                        self.state = 'VICTORY'
+                        if SOUNDS: SOUNDS.play('warp')
+                        return
+                        
                 if self.state == 'INTRO':
                     if not self.transition_state:
                         self.transition_state = 'INTRO_TO_MAIN_MENU'
@@ -9679,6 +9717,52 @@ class Game:
             factor = min(255, int(self.filter_vignette_alpha * 255 / 200))
             temp_vignette.fill((255, 255, 255, factor), special_flags=pygame.BLEND_RGBA_MULT)
             self.virtual_screen.blit(temp_vignette, (0, 0))
+
+        # Floating Dev Panel (if dev mode active)
+        if getattr(self, 'dev_mode', False):
+            # Recalculate mouse positions using letterbox scale for hover effects
+            mx, my = pygame.mouse.get_pos()
+            vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
+            vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
+            
+            panel_x = VIRTUAL_WIDTH - 230
+            panel_y = 20
+            panel_w = 210
+            panel_h = 240
+            
+            # Draw panel background
+            panel_bg = pygame.Surface((panel_w, panel_h), pygame.SRCALPHA)
+            panel_bg.fill((15, 15, 20, 220))
+            pygame.draw.rect(panel_bg, RED, (0, 0, panel_w, panel_h), width=2, border_radius=8)
+            self.ui_surface.blit(panel_bg, (panel_x, panel_y))
+            
+            # Header
+            hdr_lbl = self.font.render("DEV CONTROL PANEL", True, RED)
+            self.ui_surface.blit(hdr_lbl, (panel_x + panel_w // 2 - hdr_lbl.get_width() // 2, panel_y + 12))
+            
+            # Draw clickable buttons
+            buttons = [
+                ("INVINCIBLE", "invincible", pygame.Rect(panel_x + 10, panel_y + 45, panel_w - 20, 35)),
+                ("ADD RESOURCES", "resources", pygame.Rect(panel_x + 10, panel_y + 95, panel_w - 20, 35)),
+                ("SKIP LEVEL", "skip_level", pygame.Rect(panel_x + 10, panel_y + 145, panel_w - 20, 35)),
+                ("SKIP TO ENDING", "skip_ending", pygame.Rect(panel_x + 10, panel_y + 195, panel_w - 20, 35))
+            ]
+            
+            for text, action_type, btn_rect in buttons:
+                is_hover = btn_rect.collidepoint(vmx, vmy)
+                
+                if action_type == "invincible":
+                    btn_color = GREEN if getattr(self, 'debug_invincible', False) else (50, 50, 55)
+                    text_color = WHITE if getattr(self, 'debug_invincible', False) else (200, 200, 200)
+                else:
+                    btn_color = (70, 70, 75) if is_hover else (45, 45, 50)
+                    text_color = WHITE if is_hover else (200, 200, 200)
+                
+                pygame.draw.rect(self.ui_surface, btn_color, btn_rect, border_radius=5)
+                pygame.draw.rect(self.ui_surface, WHITE if is_hover else RED, btn_rect, width=1, border_radius=5)
+                
+                btn_lbl = self.small_font.render(text, True, text_color)
+                self.ui_surface.blit(btn_lbl, (btn_rect.centerx - btn_lbl.get_width() // 2, btn_rect.centery - btn_lbl.get_height() // 2))
 
         # Composite the dedicated UI layer on top
         self.virtual_screen.blit(self.ui_surface, (0, 0))
