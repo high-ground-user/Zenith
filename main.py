@@ -683,6 +683,7 @@ class Torpedo:
         self.explosion_duration = 30
         self.explosion_timer = 0
         self.angle = 0
+        self.is_sub = False
 
     def update(self):
         if not self.exploded:
@@ -860,7 +861,7 @@ class HomingMissile:
             screen.blit(rot_missile, (int(draw_x - rot_missile.get_width() // 2), int(draw_y - rot_missile.get_height() // 2)))
 
 class SentryDrone:
-    def __init__(self, owner, color, angle_offset=0):
+    def __init__(self, owner, color, angle_offset=0.0):
         self.owner = owner
         self.color = color
         self.angle = angle_offset
@@ -972,7 +973,7 @@ class SupportShip:
         pygame.draw.line(screen, SLATE_GRAY, center, rw_tip, width=1)
 
 class Flare:
-    def __init__(self, x, y, dx=0, dy=0):
+    def __init__(self, x, y, dx=0.0, dy=0.0):
         self.x = x
         self.y = y
         self.dx = dx
@@ -2854,6 +2855,7 @@ class Player:
     def __init__(self):
         self.width = 40
         self.height = 40
+        self.name = ""
         self.reset()
 
     def reset(self):
@@ -2992,7 +2994,7 @@ class Player:
             'bomb_cap': 'bomb_unlocked',
             'missile_cap': 'missile_unlocked'
         }
-        actual_key = base_weapon_map.get(key, key)
+        actual_key = base_weapon_map.get(key or "", key or "")
         slots_map = {
             'shield': 'SHIELD', 'deflector': 'SHIELD', 'emergency_recharge': 'SHIELD',
             'coolant': 'CORE', 'nanite_repair': 'CORE', 'class_tier1': 'CORE', 'class_tier2': 'CORE', 'class_tier3': 'CORE',
@@ -4275,7 +4277,7 @@ class Game:
             self.shockwaves.append(ShockwaveRing(x, y, count * 3, ring_color))
         self.screen_shake = min(15, self.screen_shake + int(count * 0.5))
 
-    def _damage_player(self, current_time, damage=1, sound_type='hit'):
+    def _damage_player(self, current_time, damage=1.0, sound_type='hit'):
         if damage <= 0:
             return
         if self.player.is_dead or self.player.invulnerable or self.debug_invincible:
@@ -4543,6 +4545,12 @@ class Game:
                 all_parts[k]['row'] = r
                 all_parts[k]['slot'] = s
         return all_parts
+
+    def _get_virtual_mouse_pos(self):
+        mx, my = pygame.mouse.get_pos()
+        vmx = (mx - self.offset_x) * (VIRTUAL_WIDTH / self.new_width)
+        vmy = (my - self.offset_y) * (VIRTUAL_HEIGHT / self.new_height)
+        return vmx, vmy
 
     def _handle_events(self):
         global SCREEN_WIDTH, SCREEN_HEIGHT
@@ -5266,7 +5274,8 @@ class Game:
         if SOUNDS and SOUNDS.enabled:
             wants_boss_music = False
             if self.state in ('PLAYING', 'PAUSED'):
-                if (getattr(self, 'boss', None) and not self.boss.is_dead) or (self.player.shields <= self.player.max_shields * 0.3):
+                boss_obj = getattr(self, 'boss', None)
+                if (boss_obj and not boss_obj.is_dead) or (self.player.shields <= self.player.max_shields * 0.3):
                     wants_boss_music = True
             elif self.state == 'VICTORY':
                 if SOUNDS.chan_ambient: SOUNDS.chan_ambient.set_volume(0.0)
@@ -5434,7 +5443,7 @@ class Game:
                         portal_pos_vec = portal_pos
                         break
                 
-            if active_portal:
+            if active_portal and portal_pos_vec is not None:
                 if self.wormhole_charge_timer == 0 and SOUNDS: SOUNDS.play('warp')
                 dt = self.clock.get_time()
                 self.wormhole_charge_timer += dt
@@ -5798,7 +5807,7 @@ class Game:
                         self.spawn_explosion(player_pos.x, player_pos.y, [(255, 0, 0), (255, 100, 0)], 10)
 
         scale_info = (self.offset_x, self.offset_y, self.new_width, self.new_height)
-        new_projectiles, new_flares, new_support, new_drones, new_crystals = self.player.handle_input(current_time, self.camera_y, scale_info, camera_x=self.camera_x, limit_y=False)
+        new_projectiles, new_flares, new_support, new_drones, new_crystals = self.player.handle_input(current_time, self.camera_y, scale_info, camera_x=int(self.camera_x), limit_y=False)
         
         # AABB Collision pushback/sliding against indestructible FactoryStructure walls
         for obs in self.static_obstacles:
@@ -6729,14 +6738,14 @@ class Game:
         # Check boss entities
         for ent in boss_ents:
             if m.rect.colliderect(ent.rect):
-                if not self.boss.shielded:
+                if self.boss and not self.boss.shielded:
                     ent.health -= 1.6
                     self.boss.health = sum(e.health for e in self.boss.sub_bosses if not e.is_dead)
                     self.spawn_explosion(m.x, m.y, [(255, 0, 0), (255, 128, 0)], 15)
                     if ent.health <= 0:
                         ent.is_dead = True
                         self.spawn_explosion(ent.x, ent.y, [ent.color, (255, 255, 255)], 15)
-                        if all(e.is_dead for e in self.boss.sub_bosses):
+                        if self.boss and all(e.is_dead for e in self.boss.sub_bosses):
                             self._defeat_boss()
 
         # Check shield crystals
@@ -6802,14 +6811,14 @@ class Game:
         # Boss AoE
         for ent in boss_ents:
             if m_pos.distance_to(pygame.math.Vector2(ent.rect.center)) < m.explosion_radius:
-                if not self.boss.shielded:
+                if self.boss and not self.boss.shielded:
                     ent.health -= 0.8
                     self.boss.health = sum(e.health for e in self.boss.sub_bosses if not e.is_dead)
                     self.spawn_explosion(ent.x, ent.y, [(255, 0, 0), (255, 128, 0)], 12)
                     if ent.health <= 0:
                         ent.is_dead = True
                         self.spawn_explosion(ent.x, ent.y, [ent.color, (255, 255, 255)], 15)
-                        if all(e.is_dead for e in self.boss.sub_bosses):
+                        if self.boss and all(e.is_dead for e in self.boss.sub_bosses):
                             self._defeat_boss()
 
         # Shield crystals AoE
@@ -6868,14 +6877,14 @@ class Game:
         # Check boss entities
         for ent in boss_ents:
             if b.rect.colliderect(ent.rect):
-                if not self.boss.shielded:
+                if self.boss and not self.boss.shielded:
                     ent.health -= 3.0
                     self.boss.health = sum(e.health for e in self.boss.sub_bosses if not e.is_dead)
                     self.spawn_explosion(b.x, b.y, [(255, 0, 0), (255, 128, 0)], 22)
                     if ent.health <= 0:
                         ent.is_dead = True
                         self.spawn_explosion(ent.x, ent.y, [ent.color, (255, 255, 255)], 15)
-                        if all(e.is_dead for e in self.boss.sub_bosses):
+                        if self.boss and all(e.is_dead for e in self.boss.sub_bosses):
                             self._defeat_boss()
 
         # Check shield crystals
@@ -6943,14 +6952,14 @@ class Game:
         # Boss AoE
         for ent in boss_ents:
             if b_pos.distance_to(pygame.math.Vector2(ent.rect.center)) < b.explosion_radius:
-                if not self.boss.shielded:
+                if self.boss and not self.boss.shielded:
                     ent.health -= 1.5
                     self.boss.health = sum(e.health for e in self.boss.sub_bosses if not e.is_dead)
                     self.spawn_explosion(ent.x, ent.y, [(255, 0, 0), (255, 128, 0)], 14)
                     if ent.health <= 0:
                         ent.is_dead = True
                         self.spawn_explosion(ent.x, ent.y, [ent.color, (255, 255, 255)], 15)
-                        if all(e.is_dead for e in self.boss.sub_bosses):
+                        if self.boss and all(e.is_dead for e in self.boss.sub_bosses):
                             self._defeat_boss()
 
         # Shield crystals AoE
@@ -6990,11 +6999,12 @@ class Game:
                     self.enemy_bullets.remove(eb)
 
     def _defeat_boss(self):
-        self.boss.is_dead = True
-        for ent in self.boss.sub_bosses:
-            for _ in range(3):
-                self.spawn_explosion(ent.x + random.randint(-20, 20), ent.y + random.randint(-20, 20),
-                                     [(255, 255, 0), (255, 128, 0), (255, 255, 255), (255, 0, 0)], 25)
+        if self.boss:
+            self.boss.is_dead = True
+            for ent in self.boss.sub_bosses:
+                for _ in range(3):
+                    self.spawn_explosion(ent.x + random.randint(-20, 20), ent.y + random.randint(-20, 20),
+                                         [(255, 255, 0), (255, 128, 0), (255, 255, 255), (255, 0, 0)], 25)
         self.player.add_credits(300)
         self.player.award_xp(180)
         self.active_quest.progress = 1
@@ -7595,21 +7605,24 @@ class Game:
             pygame.draw.circle(self.virtual_screen, (zone_color[0] // 4, zone_color[1] // 4, zone_color[2] // 4), (int(planet_x), int(planet_y)), planet_radius + 35, width=1)
             pygame.draw.circle(self.virtual_screen, zone_color, (int(planet_x), int(planet_y)), planet_radius, width=2)
             
-            if getattr(self, 'planet_texture', None) is not None:
+            planet_tex = getattr(self, 'planet_texture', None)
+            if planet_tex is not None:
                 dim = planet_radius * 2
                 temp_planet = pygame.Surface((dim, dim), pygame.SRCALPHA)
                 
                 map_width = 5200
                 orbit_offset = int((self.camera_x * (dim / map_width)) % dim)
-                temp_planet.blit(self.planet_texture, (-orbit_offset, 0))
-                temp_planet.blit(self.planet_texture, (dim - orbit_offset, 0))
+                temp_planet.blit(planet_tex, (-orbit_offset, 0))
+                temp_planet.blit(planet_tex, (dim - orbit_offset, 0))
                 
-                if getattr(self, 'planet_clouds', None) is not None:
+                planet_cld = getattr(self, 'planet_clouds', None)
+                if planet_cld is not None:
                     cloud_offset = int(((self.camera_x * (dim / map_width)) + (ticks * 0.04)) % dim)
-                    temp_planet.blit(self.planet_clouds, (-cloud_offset, 0))
-                    temp_planet.blit(self.planet_clouds, (dim - cloud_offset, 0))
-                if getattr(self, 'planet_mask', None) is not None:
-                    temp_planet.blit(self.planet_mask, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
+                    temp_planet.blit(planet_cld, (-cloud_offset, 0))
+                    temp_planet.blit(planet_cld, (dim - cloud_offset, 0))
+                planet_msk = getattr(self, 'planet_mask', None)
+                if planet_msk is not None:
+                    temp_planet.blit(planet_msk, (0, 0), special_flags=pygame.BLEND_RGBA_MULT)
                 self.virtual_screen.blit(temp_planet, (int(planet_x - planet_radius), int(planet_y - planet_radius)))
 
             # Render imposing background structure
@@ -7731,7 +7744,7 @@ class Game:
             # Draw stay timer charging progress in the Hub
             if self.wormhole_charge_timer > 0 and getattr(self, 'active_hub_portal', None) is not None:
                 portal_center = (600, 450)
-                cfg = BIOME_CONFIGS.get(self.active_hub_portal)
+                cfg = BIOME_CONFIGS.get(self.active_hub_portal) if self.active_hub_portal else None
                 if cfg:
                     order = cfg['order']
                     if order == 0:
@@ -7915,7 +7928,7 @@ class Game:
                 eb.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
                 
             if self.boss:
-                self.boss.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+                self.boss.draw(self.virtual_screen, int(self.camera_y + swy), int(self.camera_x + swx))
                 
             for meteor in self.meteors:
                 meteor.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
@@ -7962,7 +7975,7 @@ class Game:
             
             # Draw Convoy in Level 2
             if self.current_zone == 'VULCAN' and self.convoy:
-                self.convoy.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+                self.convoy.draw(self.virtual_screen, int(self.camera_y + swy), int(self.camera_x + swx))
                 
             # Draw Energy Cells in Level 5
             if self.current_zone == 'PLASMA':
@@ -7976,7 +7989,7 @@ class Game:
                     for anchor in self.quantum_anchors:
                         anchor.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
                 elif self.quantum_dimension == 'NORMAL' and self.black_hole_core:
-                    self.black_hole_core.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+                    self.black_hole_core.draw(self.virtual_screen, int(self.camera_y + swy), int(self.camera_x + swx))
                     
             # Draw Supernova in Level 4
             if self.current_zone == 'NEBULA' and self.supernova_y is not None:
@@ -7990,7 +8003,7 @@ class Game:
                         pygame.draw.rect(wave_surf, (255, 140 + i * 30, 0, 160 - i * 40), (0, wave_offset, VIRTUAL_WIDTH, 40))
                     self.virtual_screen.blit(wave_surf, (0, int(draw_y)))
             
-            self.player.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
+            self.player.draw(self.virtual_screen, int(self.camera_y + swy), int(self.camera_x + swx))
             
             for ss in self.support_ships:
                 ss.draw(self.virtual_screen, self.camera_y + swy, self.camera_x + swx)
@@ -9321,7 +9334,7 @@ class Game:
                     pygame.draw.circle(self.virtual_screen, (150, 40, 40), (int(dx), int(dy)), 2 + i % 3)
                 
                 # Draw shattered/dead ship silhouette rotating slowly
-                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 0, 1, scale=1.5, damaged=True, thruster_intensity=0.0, rotation_angle=go_time*0.02)
+                self._draw_cinematic_ship(self.virtual_screen, ship_x, ship_y, 0, 1, scale=1.5, damaged=True, thruster_intensity=0.0, rotation_angle=int(go_time*0.02))
             
             if go_time > 3000:
                 prompt_alpha = min(255, int((go_time - 3000) / 4))
