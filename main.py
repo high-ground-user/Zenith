@@ -14,7 +14,11 @@ import struct
 
 
 import os
-
+import json
+import zlib
+import base64
+import hashlib
+import tkinter as tk
 
 # Constants
 SCREEN_WIDTH = 800
@@ -42,6 +46,93 @@ PURPLE = (147, 112, 219)
 
 SOUNDS = None
 
+class SaveManager:
+    SAVE_DIR = "saves"
+    SAVE_FILE = os.path.join(SAVE_DIR, "save.json")
+    
+    @staticmethod
+    def save_exists():
+        return os.path.exists(SaveManager.SAVE_FILE)
+        
+    @staticmethod
+    def write_save(game):
+        try:
+            if not os.path.exists(SaveManager.SAVE_DIR):
+                os.makedirs(SaveManager.SAVE_DIR, exist_ok=True)
+            p = game.player
+            save_dict = {
+                "v": 1,
+                "name": game.player_name,
+                "stage": game.campaign_stage,
+                "class": p.class_name,
+                "lvl": p.level,
+                "xp": p.xp,
+                "pts": p.skill_points,
+                "creds": p.credits,
+                "scraps": p.scraps,
+                "wp_p": p.active_primary,
+                "wp_s": p.active_secondary,
+                "shld": p.equipped_shield,
+                "core": p.equipped_core,
+                "eng": p.equipped_engine,
+                "skills": p.skills
+            }
+            with open(SaveManager.SAVE_FILE, 'w') as f:
+                json.dump(save_dict, f, indent=4)
+            return True, "Save successful"
+        except Exception as e:
+            return False, f"Save failed: {str(e)}"
+
+    @staticmethod
+    def load_save(game):
+        try:
+            if not os.path.exists(SaveManager.SAVE_FILE):
+                return False, "No save file found"
+                
+            with open(SaveManager.SAVE_FILE, 'r') as f:
+                save_dict = json.load(f)
+                
+            game.selected_class = save_dict["class"]
+            game.reset_game()
+            
+            game.player_name = save_dict["name"]
+            game.campaign_stage = save_dict["stage"]
+            
+            p = game.player
+            p.name = game.player_name
+            p.set_class(game.selected_class)
+            p.level = save_dict["lvl"]
+            p.xp = save_dict["xp"]
+            p.skill_points = save_dict["pts"]
+            p.credits = save_dict["creds"]
+            p.scraps = save_dict["scraps"]
+            p.active_primary = save_dict["wp_p"]
+            p.active_secondary = save_dict["wp_s"]
+            p.equipped_shield = save_dict["shld"]
+            p.equipped_core = save_dict["core"]
+            p.equipped_engine = save_dict["eng"]
+            p.skills.update(save_dict["skills"])
+            
+            game.active_quest = game.quests[min(len(game.quests)-1, game.campaign_stage - 1)]
+            game.unlocked_zones = {
+                'TUTORIAL': True,
+                'ASTEROIDS': True, 
+                'VULCAN': game.campaign_stage >= 2, 
+                'AQUARIS': game.campaign_stage >= 2,
+                'NEBULA': game.campaign_stage >= 2, 
+                'PLASMA': game.campaign_stage >= 2, 
+                'VOID': game.campaign_stage >= 2,
+                'QUANTUM': game.campaign_stage >= 2, 
+                'SINGULARITY': game.campaign_stage >= 2, 
+                'ORION': game.campaign_stage >= 3
+            }
+            game.current_hub_index = 3 if game.campaign_stage >= 3 else (2 if game.campaign_stage >= 2 else 1)
+            
+            game.state = 'HUB'
+            game.current_zone = 'HUB'
+            return True, "Loaded successfully"
+        except Exception as e:
+            return False, f"Load failed: {str(e)}"
 
 #### player.py
 
@@ -3635,7 +3726,7 @@ class Game:
         self.camera_x = 0
         self.screen_shake = 0
         self.debug_invincible = False
-        self.dev_mode = True
+        self.dev_mode = False
         self.tutorial_stage = 0
         self.tutorial_dialogues = [
             {
@@ -4667,18 +4758,31 @@ class Game:
                         val = max(0.0, min(1.0, (vmx - 980) / 150.0))
                         self.filter_softness = int(val * 60)
                 
-                # Main Menu input box and Continue button click
                 if self.state == 'MAIN_MENU':
                     input_box_rect = pygame.Rect(VIRTUAL_WIDTH // 2 - 200, 350, 400, 50)
-                    continue_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 100, 430, 200, 50)
+                    has_save = SaveManager.save_exists()
+                    if has_save:
+                        new_game_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 210, 430, 200, 50)
+                        continue_btn = pygame.Rect(VIRTUAL_WIDTH // 2 + 10, 430, 200, 50)
+                    else:
+                        new_game_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 100, 430, 200, 50)
+                        continue_btn = None
+                        
                     if input_box_rect.collidepoint(vmx, vmy):
                         self.input_active = True
-                    elif continue_btn.collidepoint(vmx, vmy):
+                    elif new_game_btn.collidepoint(vmx, vmy):
                         self.player_name = self.player_name.strip()
                         if self.player_name != "":
                             self.input_active = False
                             self.player.name = self.player_name
                             self.state = 'CLASS_SELECT'
+                    elif continue_btn and continue_btn.collidepoint(vmx, vmy):
+                        self.input_active = False
+                        success, msg = SaveManager.load_save(self)
+                        self.save_feedback_msg = msg
+                        self.save_feedback_time = pygame.time.get_ticks()
+                        if success:
+                            if SOUNDS: SOUNDS.play('warp')
                     else:
                         self.input_active = False
                         
@@ -4697,6 +4801,15 @@ class Game:
                         self.player.set_class(self.selected_class)
                         self.state = 'HUB'
                         self.current_zone = 'HUB'
+
+                if self.state == 'PAUSED':
+                    save_btn = pygame.Rect(100, 780, 300, 45)
+                    if save_btn.collidepoint(vmx, vmy):
+                        success, msg = SaveManager.write_save(self)
+                        self.save_feedback_msg = msg
+                        self.save_feedback_time = pygame.time.get_ticks()
+                        if success:
+                            if SOUNDS: SOUNDS.play('collect')
 
                 # Upgrade Shop clicks (only permitted in the Hub)
                 if self.state == 'PAUSED' and self.current_zone == 'HUB' and self.hub_station_active not in ('WEAPONRY', 'ENGINEERING'):
@@ -5154,6 +5267,11 @@ class Game:
                         self.dragged_part_key = None
 
             if event.type == pygame.KEYDOWN:
+                # Toggle Developer Mode with F3
+                if event.key == pygame.K_F3:
+                    self.dev_mode = not self.dev_mode
+                    if SOUNDS: SOUNDS.play('upgrade')
+                    
                 if self.state == 'INTRO':
                     if not self.transition_state:
                         self.transition_state = 'INTRO_TO_MAIN_MENU'
@@ -5430,13 +5548,13 @@ class Game:
                 if cfg['hub'] == self.current_hub_index and self.unlocked_zones.get(zone, False):
                     order = cfg['order']
                     if order == 0:
-                        portal_pos = pygame.math.Vector2(600, 780)
+                        portal_pos = pygame.math.Vector2(150, 750)
                     elif order == 1:
-                        portal_pos = pygame.math.Vector2(1000, 220)
+                        portal_pos = pygame.math.Vector2(1050, 180)
                     elif order == 3:
-                        portal_pos = pygame.math.Vector2(450, 630)
+                        portal_pos = pygame.math.Vector2(1050, 750)
                     else:
-                        portal_pos = pygame.math.Vector2(200, 220)
+                        portal_pos = pygame.math.Vector2(150, 180)
                         
                     if player_vec.distance_to(portal_pos) < 60:
                         active_portal = zone
@@ -5929,6 +6047,27 @@ class Game:
             if ad.y > self.camera_y + VIRTUAL_HEIGHT + 200:
                 self.ambient_debris.remove(ad)
 
+        if getattr(self, 'wormhole_spawned', False):
+            # Preserving on-screen enemies, despawning off-screen ones
+            on_screen_enemies = []
+            for enemy in self.enemies:
+                if (enemy.rect.right >= self.camera_x and 
+                    enemy.rect.left <= self.camera_x + VIRTUAL_WIDTH and 
+                    enemy.rect.bottom >= self.camera_y and 
+                    enemy.rect.top <= self.camera_y + VIRTUAL_HEIGHT):
+                    on_screen_enemies.append(enemy)
+            self.enemies = on_screen_enemies
+
+            # Preserving on-screen enemy bullets, despawning off-screen ones
+            on_screen_bullets = []
+            for eb in self.enemy_bullets:
+                if (eb.rect.right >= self.camera_x and 
+                    eb.rect.left <= self.camera_x + VIRTUAL_WIDTH and 
+                    eb.rect.bottom >= self.camera_y and 
+                    eb.rect.top <= self.camera_y + VIRTUAL_HEIGHT):
+                    on_screen_bullets.append(eb)
+            self.enemy_bullets = on_screen_bullets
+
         # Spawning parameters
         actual_enemy_delay = self.enemy_spawn_delay
         actual_meteor_delay = self.meteor_spawn_delay
@@ -5943,7 +6082,7 @@ class Game:
             actual_enemy_delay = 5000 # 58% faster
             actual_meteor_delay = 4000
             
-        if self.boss is None and not self.boss_defeated:
+        if self.boss is None and not self.boss_defeated and not getattr(self, 'wormhole_spawned', False):
             can_spawn = True
             if self.current_zone == 'QUANTUM' and getattr(self, 'quantum_dimension', 'NORMAL') == 'NORMAL':
                 can_spawn = False
@@ -7378,24 +7517,49 @@ class Game:
             name_rect = name_surf.get_rect(center=input_box_rect.center)
             surf.blit(name_surf, name_rect)
             
-            continue_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 100, 430, 200, 50)
+            has_save = SaveManager.save_exists()
             is_valid = self.player_name.strip() != ""
             
-            if is_valid:
-                btn_color = CYAN if continue_btn.collidepoint(vmx, vmy) else BLUE
-                border_color = WHITE
-                text_color = BLACK if btn_color == CYAN else WHITE
-                btn_text = "CONTINUE"
+            if has_save:
+                new_game_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 210, 430, 200, 50)
+                continue_btn = pygame.Rect(VIRTUAL_WIDTH // 2 + 10, 430, 200, 50)
             else:
-                btn_color = (40, 40, 40)
-                border_color = SLATE_GRAY
-                text_color = GRAY
-                btn_text = "ENTER NAME"
+                new_game_btn = pygame.Rect(VIRTUAL_WIDTH // 2 - 100, 430, 200, 50)
+                continue_btn = None
                 
-            pygame.draw.rect(surf, btn_color, continue_btn, border_radius=8)
-            pygame.draw.rect(surf, border_color, continue_btn, width=1, border_radius=8)
-            btn_lbl = self.font.render(btn_text, True, text_color)
-            surf.blit(btn_lbl, (continue_btn.centerx - btn_lbl.get_width() // 2, continue_btn.centery - btn_lbl.get_height() // 2))
+            # Draw New Game Button
+            if is_valid:
+                new_btn_color = CYAN if new_game_btn.collidepoint(vmx, vmy) else BLUE
+                new_border_color = WHITE
+                new_text_color = BLACK if new_btn_color == CYAN else WHITE
+                new_btn_text = "NEW GAME"
+            else:
+                new_btn_color = (40, 40, 40)
+                new_border_color = SLATE_GRAY
+                new_text_color = GRAY
+                new_btn_text = "ENTER NAME"
+                
+            pygame.draw.rect(surf, new_btn_color, new_game_btn, border_radius=8)
+            pygame.draw.rect(surf, new_border_color, new_game_btn, width=1, border_radius=8)
+            new_btn_lbl = self.font.render(new_btn_text, True, new_text_color)
+            surf.blit(new_btn_lbl, (new_game_btn.centerx - new_btn_lbl.get_width() // 2, new_game_btn.centery - new_btn_lbl.get_height() // 2))
+            
+            # Draw Continue Button if save exists
+            if continue_btn:
+                cont_btn_color = CYAN if continue_btn.collidepoint(vmx, vmy) else GREEN
+                cont_border_color = WHITE
+                cont_text_color = BLACK if cont_btn_color == CYAN else WHITE
+                
+                pygame.draw.rect(surf, cont_btn_color, continue_btn, border_radius=8)
+                pygame.draw.rect(surf, cont_border_color, continue_btn, width=1, border_radius=8)
+                cont_btn_lbl = self.font.render("CONTINUE", True, cont_text_color)
+                surf.blit(cont_btn_lbl, (continue_btn.centerx - cont_btn_lbl.get_width() // 2, continue_btn.centery - cont_btn_lbl.get_height() // 2))
+                
+            # Draw Feedback Message
+            if getattr(self, 'save_feedback_msg', '') != "" and pygame.time.get_ticks() - getattr(self, 'save_feedback_time', 0) < 3000:
+                fb_color = GREEN if "success" in self.save_feedback_msg.lower() or "loaded" in self.save_feedback_msg.lower() or "saved" in self.save_feedback_msg.lower() else RED
+                fb_lbl = self.font.render(self.save_feedback_msg, True, fb_color)
+                surf.blit(fb_lbl, (VIRTUAL_WIDTH // 2 - fb_lbl.get_width() // 2, 490))
 
             controls_box = pygame.Rect(VIRTUAL_WIDTH // 2 - 260, 500, 520, 360)
             box_surf = pygame.Surface((controls_box.width, controls_box.height), pygame.SRCALPHA)
@@ -7687,21 +7851,21 @@ class Game:
                     
                     order = cfg['order']
                     if order == 0:
-                        center = (600 + swx, 780 + swy)
-                        lbl_y = 690 + swy
-                        info_y = 660 + swy
+                        center = (150 + swx, 750 + swy)
+                        lbl_y = 650 + swy
+                        info_y = 620 + swy
                     elif order == 1:
-                        center = (1000 + swx, 220 + swy)
-                        lbl_y = 290 + swy
-                        info_y = 320 + swy
+                        center = (1050 + swx, 180 + swy)
+                        lbl_y = 260 + swy
+                        info_y = 290 + swy
                     elif order == 3:
-                        center = (450 + swx, 630 + swy)
-                        lbl_y = 700 + swy
-                        info_y = 722 + swy
+                        center = (1050 + swx, 750 + swy)
+                        lbl_y = 650 + swy
+                        info_y = 620 + swy
                     else:
-                        center = (200 + swx, 220 + swy)
-                        lbl_y = 290 + swy
-                        info_y = 320 + swy
+                        center = (150 + swx, 180 + swy)
+                        lbl_y = 260 + swy
+                        info_y = 290 + swy
                         
                     pygame.draw.circle(self.virtual_screen, theme_color, center, 60 + glow, width=3)
                     pygame.draw.circle(self.virtual_screen, dark_color, center, 50)
@@ -7748,13 +7912,13 @@ class Game:
                 if cfg:
                     order = cfg['order']
                     if order == 0:
-                        portal_center = (600, 780)
+                        portal_center = (150, 750)
                     elif order == 1:
-                        portal_center = (1000, 220)
+                        portal_center = (1050, 180)
                     elif order == 3:
-                        portal_center = (450, 630)
+                        portal_center = (1050, 750)
                     else:
-                        portal_center = (200, 220)
+                        portal_center = (150, 180)
                     
                 target_charge = 1000.0 if self.player.skills.get('hyperdrive', 0) > 0 else 3000.0
                 pct = min(1.0, self.wormhole_charge_timer / target_charge)
@@ -8633,6 +8797,23 @@ class Game:
             
             quit_lbl = self.font.render("Press M to Quit to Main Menu", True, RED)
             self.virtual_screen.blit(quit_lbl, (100, quit_y))
+            
+            # Save Game Button (one-click file saving)
+            save_btn = pygame.Rect(100, 780, 300, 45)
+            save_hover = save_btn.collidepoint(vmx, vmy)
+            save_btn_color = CYAN if save_hover else BLUE
+            save_border_color = WHITE if save_hover else SLATE_GRAY
+            pygame.draw.rect(self.virtual_screen, save_btn_color, save_btn, border_radius=6)
+            pygame.draw.rect(self.virtual_screen, save_border_color, save_btn, width=1, border_radius=6)
+            
+            save_btn_lbl = self.font.render("SAVE GAME", True, BLACK if save_hover else WHITE)
+            self.virtual_screen.blit(save_btn_lbl, (save_btn.centerx - save_btn_lbl.get_width() // 2, save_btn.centery - save_btn_lbl.get_height() // 2))
+            
+            # Save feedback message
+            if getattr(self, 'save_feedback_msg', '') != "" and pygame.time.get_ticks() - getattr(self, 'save_feedback_time', 0) < 3000:
+                fb_color = GREEN if "success" in self.save_feedback_msg.lower() or "loaded" in self.save_feedback_msg.lower() or "saved" in self.save_feedback_msg.lower() else RED
+                fb_lbl = self.small_font.render(self.save_feedback_msg, True, fb_color)
+                self.virtual_screen.blit(fb_lbl, (save_btn.centerx - fb_lbl.get_width() // 2, save_btn.bottom + 5))
             
             pygame.draw.line(self.virtual_screen, SLATE_GRAY, (600, 150), (600, 800), 2)
             
