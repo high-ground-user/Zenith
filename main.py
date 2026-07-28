@@ -184,11 +184,20 @@ class SoundManager:
         
         self.sounds['victory'] = self._load_victory_or_synth()
         
-        self.music_ambient = None
-        self.music_boss = None
+        # Unlocked/added custom enemy shooting sound profiles
+        self.sounds['enemy_standard'] = self._load_or_synth('enemy_standard', 'triangle', 480, 0.12, vol=0.08, sweep=-0.3, decay=5.0)
+        self.sounds['enemy_heavy'] = self._load_or_synth('enemy_heavy', 'sine', 160, 0.22, vol=0.18, sweep=-0.5, decay=3.0)
+        self.sounds['enemy_scout'] = self._load_or_synth('enemy_scout', 'triangle', 920, 0.08, vol=0.07, sweep=-0.2, decay=6.0)
+        self.sounds['enemy_elite'] = self._load_or_synth('enemy_elite', 'sawtooth', 360, 0.18, vol=0.14, sweep=-0.4, decay=4.0)
+        self.sounds['enemy_boss'] = self._load_or_synth('enemy_boss', 'noise', 220, 0.32, vol=0.20, sweep=-0.6, decay=3.5)
+        
+        # Load ambient & boss music procedural generators
+        self.music_ambient = self._load_music_or_synth('ambient', 'ambient')
+        self.music_boss = self._load_music_or_synth('boss', 'boss')
         
         self.chan_ambient = None
         self.chan_boss = None
+        self.chan_engine = None
 
         self.set_global_volume(self.volume)
 
@@ -286,12 +295,13 @@ class SoundManager:
             return None
 
     def play(self, name):
-        if name in ('warp', 'victory'): return
-        if self.enabled and name in self.sounds and self.sounds[name]:
+        if not self.enabled: return
+        if name in self.sounds and self.sounds[name]:
+            if name in ('warp', 'victory', 'siren', 'engine'):
+                self.sounds[name].stop()
             self.sounds[name].play()
 
     def play_spatial(self, name, source_x, source_y, player_x, player_y):
-        if name in ('warp', 'victory'): return
         if not self.enabled: return
         if name not in self.sounds or not self.sounds[name]: return
         
@@ -511,7 +521,7 @@ class SoundManager:
         except Exception:
             return None
 
-    def update_music(self, wants_boss):
+    def update_music(self, wants_boss, game_state='MAIN_MENU', is_moving=False):
         if not self.enabled: return
         
         # Start loops if not running
@@ -530,6 +540,21 @@ class SoundManager:
         if self.chan_boss:
             cur_vol = self.chan_boss.get_volume()
             self.chan_boss.set_volume(cur_vol + (target_boss - cur_vol) * 0.05)
+
+        # Engine droning loop management
+        if game_state in ('PLAYING', 'HUB') and 'engine' in self.sounds and self.sounds['engine']:
+            if self.chan_engine is None:
+                self.chan_engine = self.sounds['engine'].play(loops=-1)
+            
+            if self.chan_engine:
+                # Dynamic volume based on whether the player is moving
+                target_engine_vol = self.volume * 0.15 if is_moving else self.volume * 0.04
+                cur_engine_vol = self.chan_engine.get_volume()
+                self.chan_engine.set_volume(cur_engine_vol + (target_engine_vol - cur_engine_vol) * 0.1)
+        else:
+            if self.chan_engine:
+                self.chan_engine.stop()
+                self.chan_engine = None
 
 class Quest:
     def __init__(self, key, title, description, target, reward_credits, reward_xp):
@@ -1794,6 +1819,7 @@ class Boss:
                 continue
             if current_time - ent.last_shot > self.shoot_delay:
                 ent.last_shot = current_time
+                if SOUNDS: SOUNDS.play_spatial('enemy_boss', ent.rect.centerx, ent.rect.centery, player.x, player.y)
                 ent_center = pygame.math.Vector2(ent.rect.center)
                 player_center = pygame.math.Vector2(player.rect.center)
                 dir_to_player = (player_center - ent_center).normalize()
@@ -2269,6 +2295,15 @@ class Enemy:
         if abs(self.y - target_center.y) < 600:
             if current_time - self.last_shot > self.shoot_delay:
                 self.last_shot = current_time
+                sound_key = 'enemy_standard'
+                if self.subtype == 'HEAVY':
+                    sound_key = 'enemy_heavy'
+                elif self.subtype == 'SCOUT':
+                    sound_key = 'enemy_scout'
+                elif self.subtype == 'ELITE':
+                    sound_key = 'enemy_elite'
+                if SOUNDS:
+                    SOUNDS.play_spatial(sound_key, self.x, self.y, player.x, player.y)
                 rad = math.radians(self.angle)
                 bullet_dx = math.cos(rad)
                 bullet_dy = math.sin(rad)
@@ -3508,6 +3543,7 @@ class Player:
                     b_speed = 26 * getattr(self, 'bullet_speed_mod', 1.0)
 
                     if self.active_primary == 0: # Laser
+                        if SOUNDS: SOUNDS.play('laser')
                         weapon_level = self.get_active_skill('weapon')
                         if weapon_level == 0:
                             b = Bullet(tip_x, tip_y, self.direction.x, self.direction.y, speed=b_speed)
@@ -3541,6 +3577,7 @@ class Player:
                                 self.overheated = True
 
                     elif self.active_primary == 1 and self.get_active_skill('shotgun_unlocked'): # Shotgun
+                        if SOUNDS: SOUNDS.play('shotgun')
                         sm = self.get_active_skill('shotgun_mod')
                         final_heat = 12.0 - (sm * 1.5)
                         for offset in [-20, -10, 0, 10, 20]:
@@ -3554,6 +3591,7 @@ class Player:
                                 self.overheated = True
  
                     elif self.active_primary == 2 and self.get_active_skill('railgun_unlocked'): # Railgun
+                        if SOUNDS: SOUNDS.play('railgun')
                         rm = self.get_active_skill('railgun_mod')
                         final_heat = 15.0
                         projectiles.append(Bullet(tip_x, tip_y, self.direction.x, self.direction.y, speed=25, life=100, piercing=True, damage=6.0 + 2.0*rm, color=CYAN))
@@ -3573,18 +3611,21 @@ class Player:
                 actual_torpedo_delay = self.torpedo_delay * (1.0 - 0.15 * self.get_active_skill('torpedo'))
                 if current_time - self.last_torpedo > actual_torpedo_delay:
                     self.last_torpedo = current_time
+                    if SOUNDS: SOUNDS.play('launch')
                     scale = 1.0 + 0.15 * self.get_active_skill('torpedo')
                     projectiles.append(Torpedo(tip_x, tip_y, self.direction.x, self.direction.y, scale))
             
             elif self.active_secondary == 1 and self.get_active_skill('bomb_unlocked') and self.bomb_ammo > 0: # Bomb
                 if current_time - self.last_secondary > 500:
                     self.last_secondary = current_time
+                    if SOUNDS: SOUNDS.play('launch')
                     self.bomb_ammo -= 1
                     projectiles.append(ProxBomb(tip_x, tip_y, self.direction.x, self.direction.y, scale=1.0 + 0.15*self.get_active_skill('bomb_cap')))
                     
             elif self.active_secondary == 2 and self.get_active_skill('missile_unlocked') and self.missile_ammo > 0: # Missile
                 if current_time - self.last_secondary > 400:
                     self.last_secondary = current_time
+                    if SOUNDS: SOUNDS.play('launch')
                     self.missile_ammo -= 1
                     projectiles.append(HomingMissile(tip_x, tip_y, self.direction.x, self.direction.y, scale=1.0 + 0.15*self.get_active_skill('missile_cap'), shooter=self))
 
@@ -5415,7 +5456,12 @@ class Game:
                 if not getattr(self, '_played_victory_music', False):
                     SOUNDS.play('victory')
                     self._played_victory_music = True
-            SOUNDS.update_music(wants_boss_music)
+            
+            # Determine if player ship is moving for engine drone volume shifts
+            keys = pygame.key.get_pressed()
+            has_movement_input = keys[pygame.K_UP] or keys[pygame.K_w] or keys[pygame.K_DOWN] or keys[pygame.K_s] or keys[pygame.K_LEFT] or keys[pygame.K_a] or keys[pygame.K_RIGHT] or keys[pygame.K_d]
+            is_moving = (has_movement_input or self.player.velocity.length() > 0.5) and not self.player.is_dead
+            SOUNDS.update_music(wants_boss_music, game_state=self.state, is_moving=is_moving)
         
         # Intro sequence processing
         if self.state == 'INTRO' or self.transition_state == 'INTRO_TO_MAIN_MENU':
