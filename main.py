@@ -3733,7 +3733,7 @@ class Player:
         glass_right = cockpit_center + dir_f * (self.height // 8) + dir_r * (4 * bank_squeeze)
         pygame.draw.polygon(screen, WHITE, [glass_tip, glass_left, glass_right])
 
-        # 6. SHIELD FORCEFIELD (flashes brighter and thicker when hit)
+        # 6. SHIELD FORCEFIELD (flashes brighter and thicker when hit, using transparent alpha surfaces)
         if self.shields > 0:
             is_hit_recently = (current_time - getattr(self, 'shield_bubble_timer', 0) < 300)
             if is_hit_recently:
@@ -3745,7 +3745,15 @@ class Player:
                 glow_color = (0, 255, 255, glow_intensity)
                 width_val = 2
                 radius = int(self.width * 0.9)
-            pygame.draw.circle(screen, glow_color, (int(center_x), int(center_y)), radius, width=width_val)
+            
+            # Draw to a dedicated alpha surface to support correct transparency blend
+            shield_surf = pygame.Surface((radius * 2 + 10, radius * 2 + 10), pygame.SRCALPHA)
+            pygame.draw.circle(shield_surf, glow_color, (radius + 5, radius + 5), radius, width=width_val)
+            if is_hit_recently:
+                # Add a subtle interior glow when hit
+                fill_color = (0, 255, 255, 45)
+                pygame.draw.circle(shield_surf, fill_color, (radius + 5, radius + 5), radius - width_val)
+            screen.blit(shield_surf, (int(center_x - radius - 5), int(center_y - radius - 5)))
 
 class Game:
     def __init__(self):
@@ -3821,6 +3829,8 @@ class Game:
         self.filter_vignette_alpha = 100
         self.filter_softness = 15
         self.vignette_surface = self._generate_vignette()
+        self.vignette_red_surface = self._generate_red_vignette()
+        self.delayed_explosions = []
         self.hub_station_active = None
         self.shop_tab = 'MAIN'
         
@@ -3850,6 +3860,19 @@ class Game:
                 ratio = dist / max_dist
                 alpha = int(255 * (ratio ** 2))
                 surf.set_at((x, y), (0, 0, 0, min(255, alpha)))
+        return pygame.transform.smoothscale(surf, (VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
+
+    def _generate_red_vignette(self):
+        w, h = 120, 90
+        surf = pygame.Surface((w, h), pygame.SRCALPHA)
+        cx, cy = w / 2, h / 2
+        max_dist = math.sqrt(cx**2 + cy**2)
+        for y in range(h):
+            for x in range(w):
+                dist = math.sqrt((x - cx)**2 + (y - cy)**2)
+                ratio = dist / max_dist
+                alpha = int(255 * (ratio ** 2))
+                surf.set_at((x, y), (255, 0, 0, min(255, alpha)))
         return pygame.transform.smoothscale(surf, (VIRTUAL_WIDTH, VIRTUAL_HEIGHT))
 
     def _update_scaling(self):
@@ -3895,6 +3918,7 @@ class Game:
         self.game_over = False
         self.running = True
         self.loot_pickups = []
+        self.delayed_explosions = []
         self.planet_features = []
         self.planet_texture = None
         self.planet_clouds = None
@@ -4418,6 +4442,24 @@ class Game:
             ring_color = color_palette[0] if color_palette else CYAN
             self.shockwaves.append(ShockwaveRing(x, y, count * 3, ring_color))
         self.screen_shake = min(15, self.screen_shake + int(count * 0.5))
+
+    def spawn_chain_explosion(self, x, y, color_palette, num_explosions=4):
+        # Trigger the initial main explosion immediately
+        self.spawn_explosion(x, y, color_palette, 20)
+        
+        # Queue secondary explosions spread out in space and time
+        for i in range(num_explosions):
+            delay = (i + 1) * random.randint(150, 300) # stagger them every 150-300ms
+            offset_x = random.randint(-45, 45)
+            offset_y = random.randint(-45, 45)
+            count = random.randint(8, 12)
+            self.delayed_explosions.append({
+                'time': pygame.time.get_ticks() + delay,
+                'x': x + offset_x,
+                'y': y + offset_y,
+                'palette': color_palette,
+                'count': count
+            })
 
     def _damage_player(self, current_time, damage=1.0, sound_type='hit'):
         if damage <= 0:
@@ -5462,6 +5504,19 @@ class Game:
             has_movement_input = keys[pygame.K_UP] or keys[pygame.K_w] or keys[pygame.K_DOWN] or keys[pygame.K_s] or keys[pygame.K_LEFT] or keys[pygame.K_a] or keys[pygame.K_RIGHT] or keys[pygame.K_d]
             is_moving = (has_movement_input or self.player.velocity.length() > 0.5) and not self.player.is_dead
             SOUNDS.update_music(wants_boss_music, game_state=self.state, is_moving=is_moving)
+
+        # Process delayed explosions (chain reactions)
+        for de in self.delayed_explosions[:]:
+            if current_time >= de['time']:
+                self.spawn_explosion(de['x'], de['y'], de['palette'], de['count'])
+                self.delayed_explosions.remove(de)
+
+        # Low health/shield warning siren pulse
+        if self.state in ('PLAYING', 'HUB') and not self.player.is_dead:
+            if self.player.shields <= self.player.max_shields * 0.35:
+                if current_time - getattr(self, 'last_low_health_siren', 0) > 1200:
+                    self.last_low_health_siren = current_time
+                    if SOUNDS: SOUNDS.play('siren')
         
         # Intro sequence processing
         if self.state == 'INTRO' or self.transition_state == 'INTRO_TO_MAIN_MENU':
@@ -6815,7 +6870,7 @@ class Game:
                         self.spawn_explosion(bullet.x, bullet.y, [(255, 0, 0), (255, 128, 0)], 6)
                         if hit_ent.health <= 0:
                             hit_ent.is_dead = True
-                            self.spawn_explosion(hit_ent.x, hit_ent.y, [hit_ent.color, (255, 255, 255)], 15)
+                            self.spawn_chain_explosion(hit_ent.x, hit_ent.y, [hit_ent.color, (255, 255, 255)], num_explosions=3)
                             if all(e.is_dead for e in self.boss.sub_bosses):
                                 self._defeat_boss()
                                 break
@@ -6836,7 +6891,7 @@ class Game:
                             self.spawn_explosion(torpedo.x, torpedo.y, [(255, 0, 0), (255, 128, 0)], 20)
                             if hit_ent.health <= 0:
                                 hit_ent.is_dead = True
-                                self.spawn_explosion(hit_ent.x, hit_ent.y, [hit_ent.color, (255, 255, 255)], 15)
+                                self.spawn_chain_explosion(hit_ent.x, hit_ent.y, [hit_ent.color, (255, 255, 255)], num_explosions=3)
                                 if all(e.is_dead for e in self.boss.sub_bosses):
                                     self._defeat_boss()
                                     break
@@ -6856,7 +6911,7 @@ class Game:
                                     torpedo.hit_subbosses.add(ent)
                                     if ent.health <= 0:
                                         ent.is_dead = True
-                                        self.spawn_explosion(ent.x, ent.y, [ent.color, (255, 255, 255)], 15)
+                                        self.spawn_chain_explosion(ent.x, ent.y, [ent.color, (255, 255, 255)], num_explosions=3)
                                         if all(e.is_dead for e in self.boss.sub_bosses):
                                             self._defeat_boss()
                                             break
@@ -7206,9 +7261,7 @@ class Game:
         if self.boss:
             self.boss.is_dead = True
             for ent in self.boss.sub_bosses:
-                for _ in range(3):
-                    self.spawn_explosion(ent.x + random.randint(-20, 20), ent.y + random.randint(-20, 20),
-                                         [(255, 255, 0), (255, 128, 0), (255, 255, 255), (255, 0, 0)], 25)
+                self.spawn_chain_explosion(ent.x, ent.y, [(255, 255, 0), (255, 128, 0), (255, 255, 255), (255, 0, 0)], num_explosions=5)
         self.player.add_credits(300)
         self.player.award_xp(180)
         self.active_quest.progress = 1
@@ -7246,6 +7299,13 @@ class Game:
 
     def _kill_enemy(self, enemy):
         if enemy in self.enemies:
+            # Trigger standard or chain explosion upon death
+            is_heavy = getattr(enemy, 'subtype', '') in ('HEAVY', 'ELITE') or enemy.credits_value >= 60
+            if is_heavy:
+                self.spawn_chain_explosion(enemy.rect.centerx, enemy.rect.centery, [(255, 0, 0), (255, 128, 0), (255, 255, 0)], 4)
+            else:
+                self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, [(255, 0, 0), (255, 128, 0), (255, 255, 0)], 15)
+                
             if self.current_zone == 'VOID' and getattr(enemy, 'name', '') == 'Abyss Sentinel':
                 self.void_enemies_killed += 1
             if hasattr(enemy, 'on_death'):
@@ -10088,6 +10148,15 @@ class Game:
             factor = min(255, int(self.filter_vignette_alpha * 255 / 200))
             temp_vignette.fill((255, 255, 255, factor), special_flags=pygame.BLEND_RGBA_MULT)
             self.virtual_screen.blit(temp_vignette, (0, 0))
+
+        # 4. Low Health / Critical Warning Vignette Overlay (flashing red)
+        if self.state in ('PLAYING', 'HUB') and not self.player.is_dead:
+            if self.player.shields <= self.player.max_shields * 0.35 and getattr(self, 'vignette_red_surface', None) is not None:
+                pulse_alpha = int(70 + 40 * math.sin(pygame.time.get_ticks() * 0.007))
+                temp_red_vig = pygame.Surface((VIRTUAL_WIDTH, VIRTUAL_HEIGHT), pygame.SRCALPHA)
+                temp_red_vig.blit(self.vignette_red_surface, (0, 0))
+                temp_red_vig.fill((255, 255, 255, pulse_alpha), special_flags=pygame.BLEND_RGBA_MULT)
+                self.virtual_screen.blit(temp_red_vig, (0, 0))
 
         # Floating Dev Panel (if dev mode active)
         if getattr(self, 'dev_mode', False):
