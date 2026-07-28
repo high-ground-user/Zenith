@@ -75,7 +75,11 @@ class SaveManager:
                 "shld": p.equipped_shield,
                 "core": p.equipped_core,
                 "eng": p.equipped_engine,
-                "skills": p.skills
+                "skills": p.skills,
+                "vol": int(SOUNDS.volume * 100) if SOUNDS else 50,
+                "tint": game.filter_tint_alpha,
+                "vignette": game.filter_vignette_alpha,
+                "softness": game.filter_softness
             }
             with open(SaveManager.SAVE_FILE, 'w') as f:
                 json.dump(save_dict, f, indent=4)
@@ -112,6 +116,12 @@ class SaveManager:
             p.equipped_core = save_dict["core"]
             p.equipped_engine = save_dict["eng"]
             p.skills.update(save_dict["skills"])
+            
+            if SOUNDS and "vol" in save_dict:
+                SOUNDS.set_global_volume(save_dict["vol"] / 100.0)
+            game.filter_tint_alpha = save_dict.get("tint", 50)
+            game.filter_vignette_alpha = save_dict.get("vignette", 100)
+            game.filter_softness = save_dict.get("softness", 15)
             
             game.active_quest = game.quests[min(len(game.quests)-1, game.campaign_stage - 1)]
             game.unlocked_zones = {
@@ -5363,6 +5373,10 @@ class Game:
                 elif self.state == 'PAUSED':
                     if event.key in (pygame.K_ESCAPE, pygame.K_p):
                         self.state = 'PLAYING' if self.current_zone != 'HUB' else 'HUB'
+                        if self.state == 'HUB':
+                            success, msg = SaveManager.write_save(self)
+                            self.save_feedback_msg = "SYSTEM: AUTOSAVED" if success else "SYSTEM: AUTOSAVE FAILED"
+                            self.save_feedback_time = pygame.time.get_ticks()
                     elif event.key == pygame.K_m:
                         self.state = 'MAIN_MENU'
                 
@@ -5895,6 +5909,11 @@ class Game:
                     self.boss_defeated = False
                     self.wormhole_spawned = False
                     self.zoom_level = 1.0
+                    
+                    # Trigger autosave when warping back to Hub
+                    success, msg = SaveManager.write_save(self)
+                    self.save_feedback_msg = "SYSTEM: AUTOSAVED" if success else "SYSTEM: AUTOSAVE FAILED"
+                    self.save_feedback_time = pygame.time.get_ticks()
                     return
             else:
                 self.wormhole_charge_timer = 0
@@ -9953,6 +9972,49 @@ class Game:
             # 4. Softness/Blur Slider (y=240)
             draw_slider("SOFT FOCUS", 240, self.filter_softness, 60, self.dragging_softness)
             
+        # Draw save feedback message on HUD during gameplay/Hub
+        if getattr(self, 'save_feedback_msg', '') != "" and pygame.time.get_ticks() - getattr(self, 'save_feedback_time', 0) < 3000:
+            fb_color = GREEN if "success" in self.save_feedback_msg.lower() or "loaded" in self.save_feedback_msg.lower() or "saved" in self.save_feedback_msg.lower() or "autosav" in self.save_feedback_msg.lower() else RED
+            fb_lbl = self.small_font.render(self.save_feedback_msg, True, fb_color)
+            self.virtual_screen.blit(fb_lbl, (VIRTUAL_WIDTH - fb_lbl.get_width() - 15, VIRTUAL_HEIGHT - fb_lbl.get_height() - 15))
+
+        # Hub active portals pointer / radar
+        if self.state == 'HUB':
+            player_pos = pygame.math.Vector2(self.player.x + self.player.width // 2, self.player.y + self.player.height // 2)
+            for zone, cfg in BIOME_CONFIGS.items():
+                if cfg['hub'] == self.current_hub_index and self.unlocked_zones.get(zone, False):
+                    order = cfg['order']
+                    if order == 0:
+                        portal_center = pygame.math.Vector2(150, 750)
+                    elif order == 1:
+                        portal_center = pygame.math.Vector2(1050, 180)
+                    elif order == 3:
+                        portal_center = pygame.math.Vector2(1050, 750)
+                    else:
+                        portal_center = pygame.math.Vector2(150, 180)
+                        
+                    to_portal = portal_center - player_pos
+                    dist = to_portal.length()
+                    
+                    # Only show pointer if the portal is off screen (player is relatively far)
+                    if dist > 350:
+                        target_dir = to_portal.normalize()
+                        angle = math.degrees(math.atan2(target_dir.y, target_dir.x))
+                        
+                        # Place arrow on a radius of 120 pixels around player
+                        arrow_x = VIRTUAL_WIDTH // 2 + target_dir.x * 120
+                        arrow_y = VIRTUAL_HEIGHT // 2 + target_dir.y * 120
+                        
+                        arrow_surf = pygame.Surface((30, 30), pygame.SRCALPHA)
+                        pygame.draw.polygon(arrow_surf, cfg['theme_color'], [(8, 4), (24, 15), (8, 26), (14, 15)])
+                        rot_arrow = pygame.transform.rotate(arrow_surf, -angle)
+                        
+                        self.virtual_screen.blit(rot_arrow, (int(arrow_x - rot_arrow.get_width() // 2), int(arrow_y - rot_arrow.get_height() // 2)))
+                        
+                        # Small text indicator
+                        p_lbl = self.small_font.render(cfg['name'].split(' ')[0], True, cfg['theme_color'])
+                        self.virtual_screen.blit(p_lbl, (int(arrow_x - p_lbl.get_width() // 2), int(arrow_y + 15)))
+
         # Restore original virtual screen and apply post-processing filters
         self.virtual_screen = original_virtual_screen
         
