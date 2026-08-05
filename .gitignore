@@ -14,3 +14,7 @@ wheels/
 
 # Backups and archives
 archive/
+
+# Local game saves
+saves/
+
