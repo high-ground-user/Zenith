@@ -428,11 +428,19 @@ class SoundManager:
         if self.current_level == level:
             return
         self.current_level = level
-        # Get or generate music for this level
-        music = self.music_levels.get(level)
+        
+        # Convert string zone name to integer index if needed
+        if isinstance(level, str):
+            zones = ['TUTORIAL', 'ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'SINGULARITY', 'QUANTUM', 'VOID', 'ORION']
+            level_idx = zones.index(level) if level in zones else 0
+        else:
+            level_idx = level
+
+        # Get or generate music for this level index
+        music = self.music_levels.get(level_idx)
         if music is None:
-            music = self._load_music_or_synth(f"level_{level}", "level")
-            self.music_levels[level] = music
+            music = self._load_music_or_synth(f"level_{level_idx}", "level")
+            self.music_levels[level_idx] = music
         # Stop previous level channel
         if self.chan_level:
             self.chan_level.stop()
