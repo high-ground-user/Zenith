@@ -1,3 +1,4 @@
+# region UTILITIES & SYSTEM
 """
 This is the main module for the space game.
 It handles the overall structure and flow of the game.
@@ -156,15 +157,20 @@ class SoundManager:
         except Exception:
             self.enabled = False
             return
-
         self.sounds = {}
+        # Channels for music layers
+        self.chan_ambient = None
+        self.chan_boss = None
+        self.chan_level = None
+        self.chan_engine = None
+        self.current_level = None
+        # Load sounds and music as before
         # Create external sounds folder if not exists
         if not os.path.exists(os.path.join("assets", "sounds")):
             try:
                 os.makedirs(os.path.join("assets", "sounds"), exist_ok=True)
             except Exception:
                 pass
-
         # Generate basic retro sounds in memory (or load custom ones if available)
         self.sounds['laser'] = self._load_or_synth('laser', 'triangle', 660, 0.12, vol=0.12, sweep=-0.6, decay=4.0)
         self.sounds['shotgun'] = self._load_or_synth('shotgun', 'noise', 80, 0.25, vol=0.25, sweep=-0.2, decay=5.0)
@@ -181,24 +187,17 @@ class SoundManager:
         self.sounds['metal_hit'] = self._load_or_synth('metal_hit', 'triangle', 1200, 0.06, vol=0.15, sweep=-0.9, decay=8.0)
         self.sounds['engine'] = self._load_or_synth('engine', 'sine', 80, 0.25, vol=0.15, sweep=0.0, decay=1.0)
         self.sounds['tick'] = self._load_or_synth('tick', 'sine', 1500, 0.03, vol=0.08, sweep=-0.8, decay=10.0)
-        
         self.sounds['victory'] = self._load_victory_or_synth()
-        
-        # Unlocked/added custom enemy shooting sound profiles
+        # Enemy sound profiles
         self.sounds['enemy_standard'] = self._load_or_synth('enemy_standard', 'triangle', 480, 0.12, vol=0.08, sweep=-0.3, decay=5.0)
         self.sounds['enemy_heavy'] = self._load_or_synth('enemy_heavy', 'sine', 160, 0.22, vol=0.18, sweep=-0.5, decay=3.0)
         self.sounds['enemy_scout'] = self._load_or_synth('enemy_scout', 'triangle', 920, 0.08, vol=0.07, sweep=-0.2, decay=6.0)
         self.sounds['enemy_elite'] = self._load_or_synth('enemy_elite', 'sawtooth', 360, 0.18, vol=0.14, sweep=-0.4, decay=4.0)
         self.sounds['enemy_boss'] = self._load_or_synth('enemy_boss', 'noise', 220, 0.32, vol=0.20, sweep=-0.6, decay=3.5)
-        
-        # Load ambient & boss music procedural generators
+        # Load ambient & boss music generators
         self.music_ambient = self._load_music_or_synth('ambient', 'ambient')
         self.music_boss = self._load_music_or_synth('boss', 'boss')
-        
-        self.chan_ambient = None
-        self.chan_boss = None
-        self.chan_engine = None
-
+        self.music_levels = {}
         self.set_global_volume(self.volume)
 
     def _load_or_synth(self, name, wave_type, freq, duration, vol=0.5, sweep=0.0, decay=3.0):
@@ -231,8 +230,12 @@ class SoundManager:
                     pass
         if music_type == 'ambient':
             return self._gen_ambient_music()
-        else:
+        elif music_type == 'boss':
             return self._gen_boss_music()
+        else:
+            # Level-specific music generation (retro‑electric style)
+            level = int(filename.replace('level_', ''))
+            return self._gen_level_music(level)
 
     def set_global_volume(self, volume):
         if not self.enabled: return
@@ -240,6 +243,13 @@ class SoundManager:
         for sound in self.sounds.values():
             if sound:
                 sound.set_volume(self.volume)
+        # Adjust music channel volumes as well
+        if self.chan_ambient:
+            self.chan_ambient.set_volume(self.volume * 0.5)
+        if self.chan_boss:
+            self.chan_boss.set_volume(self.volume * 0.5)
+        if self.chan_level:
+            self.chan_level.set_volume(self.volume * 0.5)
 
     def _gen_synth(self, wave_type, freq, duration, vol=0.5, sweep=0.0, decay=3.0):
         if not self.enabled: return None
@@ -300,6 +310,10 @@ class SoundManager:
             if name in ('warp', 'victory', 'siren', 'engine'):
                 self.sounds[name].stop()
             self.sounds[name].play()
+        # Convenience for level music
+        if name.startswith('level_'):
+            level = int(name.split('_')[1])
+            self.play_level_music(level)
 
     def play_spatial(self, name, source_x, source_y, player_x, player_y):
         if not self.enabled: return
@@ -330,6 +344,11 @@ class SoundManager:
                 wav.setsampwidth(2)
                 wav.setframerate(sample_rate)
                 data = bytearray()
+                
+                # Echo reverb delay line buffer
+                delay_samples = int(sample_rate * 0.35)
+                delay_line = [0.0] * delay_samples
+                delay_ptr = 0
                 
                 # Dynamic 8-chord progression (Space Opera ambient theme)
                 chords = [
@@ -385,7 +404,217 @@ class SoundManager:
                                           math.sin(2 * math.pi * freq * 3.0 * note_t) * 0.10) * env
                     
                     total_val = (pad_val * 0.40 + bass_val * 0.35 + piano_val * 0.25)
+                    
+                    # Apply Echo Reverb filter
+                    echo_val = delay_line[delay_ptr]
+                    delay_line[delay_ptr] = total_val + echo_val * 0.38
+                    delay_ptr = (delay_ptr + 1) % delay_samples
+                    
+                    total_val = total_val + echo_val * 0.25
+                    
                     sample = int(total_val * 0.16 * 32767)
+                    sample = max(-32768, min(32767, sample))
+                    data += struct.pack('<h', sample)
+                wav.writeframes(data)
+            buf.seek(0)
+            return pygame.mixer.Sound(buf)
+        except Exception:
+            return None
+
+    def play_level_music(self, level):
+        """Play or switch to level-specific music."""
+        if not self.enabled:
+            return
+        if self.current_level == level:
+            return
+        self.current_level = level
+        # Get or generate music for this level
+        music = self.music_levels.get(level)
+        if music is None:
+            music = self._load_music_or_synth(f"level_{level}", "level")
+            self.music_levels[level] = music
+        # Stop previous level channel
+        if self.chan_level:
+            self.chan_level.stop()
+        # Play new music loop
+        self.chan_level = music.play(loops=-1) if music else None
+        if self.chan_level:
+            self.chan_level.set_volume(0.0) # Start at 0 volume so it can fade in smoothly
+
+    def _gen_level_music(self, zone_key):
+        """Generate retro‑electric music for a specific level or biome."""
+        if not self.enabled:
+            return None
+        
+        # Fallback zone name if zone_key is int
+        zone_name = zone_key
+        if isinstance(zone_key, int):
+            zones = ['TUTORIAL', 'ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'SINGULARITY', 'QUANTUM', 'VOID', 'ORION']
+            zone_name = zones[zone_key % len(zones)]
+            
+        sample_rate = 22050
+        duration = 30.0
+        num_samples = int(sample_rate * duration)
+        buf = io.BytesIO()
+        try:
+            with wave.open(buf, 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(sample_rate)
+                data = bytearray()
+                
+                # Determine music style based on zone_name
+                tempo_bpm = 120
+                wave_type = 'triangle'
+                root_hz = 65.41  # C2
+                use_arp = False
+                
+                if zone_name == 'TUTORIAL':
+                    tempo_bpm = 100
+                    wave_type = 'sine'
+                    root_hz = 73.42  # D2 (calm, neutral)
+                elif zone_name == 'ASTEROIDS':
+                    tempo_bpm = 125
+                    wave_type = 'square'
+                    root_hz = 55.00  # A1 (low, heavy)
+                elif zone_name == 'VULCAN':
+                    tempo_bpm = 150  # Fast!
+                    wave_type = 'sawtooth'
+                    root_hz = 82.41  # E2 (aggressive, driving)
+                    use_arp = True
+                elif zone_name == 'AQUARIS':
+                    tempo_bpm = 105
+                    wave_type = 'sine'
+                    root_hz = 98.00  # G2 (high, crystalline)
+                    use_arp = True
+                elif zone_name == 'NEBULA':
+                    tempo_bpm = 115
+                    wave_type = 'sawtooth'
+                    root_hz = 58.27  # A#1 (unstable)
+                elif zone_name == 'PLASMA':
+                    tempo_bpm = 130
+                    wave_type = 'triangle'
+                    root_hz = 65.41  # C2 (pulsing)
+                    use_arp = True
+                elif zone_name == 'SINGULARITY':
+                    tempo_bpm = 140
+                    wave_type = 'square'
+                    root_hz = 49.00  # G1 (deep reactor hum)
+                elif zone_name == 'QUANTUM':
+                    tempo_bpm = 110
+                    wave_type = 'sine'
+                    root_hz = 77.78  # D#2 (detuned, shifting)
+                elif zone_name == 'VOID':
+                    tempo_bpm = 90   # Very slow
+                    wave_type = 'sine'
+                    root_hz = 41.20  # E1 (extremely deep abyss)
+                elif zone_name == 'ORION':
+                    tempo_bpm = 135
+                    wave_type = 'sawtooth'
+                    root_hz = 65.41  # C2 (epic fortress)
+                    use_arp = True
+                
+                # Chord progression
+                chords = [
+                    [root_hz, root_hz * 1.25, root_hz * 1.5],
+                    [root_hz * 0.9, root_hz * 1.12, root_hz * 1.35],
+                    [root_hz * 1.1, root_hz * 1.37, root_hz * 1.65],
+                    [root_hz * 0.95, root_hz * 1.18, root_hz * 1.42]
+                ]
+                
+                step_dur = 60.0 / tempo_bpm
+                
+                delay_samples = int(sample_rate * 0.3)
+                delay_line = [0.0] * delay_samples
+                delay_ptr = 0
+                
+                for i in range(num_samples):
+                    t = float(i) / sample_rate
+                    chord_idx = int((t / (step_dur * 8))) % len(chords)
+                    notes = chords[chord_idx]
+                    
+                    # Synthesize Chords
+                    chord_val = 0.0
+                    for freq in notes:
+                        cycle = freq * t
+                        if wave_type == 'square':
+                            osc = 1.0 if math.sin(2 * math.pi * freq * t) > 0 else -1.0
+                        elif wave_type == 'sawtooth':
+                            osc = 2.0 * (cycle - math.floor(cycle + 0.5))
+                        elif wave_type == 'sine':
+                            osc = math.sin(2 * math.pi * freq * t)
+                        else: # triangle
+                            osc = 2.0 * abs(2.0 * (cycle - math.floor(cycle + 0.5))) - 1.0
+                        chord_val += osc
+                    chord_val /= len(notes)
+                    
+                    # Synthesize Arpeggiator (retro melody)
+                    arp_val = 0.0
+                    if use_arp:
+                        arp_notes = [notes[0]*2, notes[1]*2, notes[2]*2, notes[1]*3]
+                        arp_step_idx = int(t / (step_dur / 2)) % len(arp_notes)
+                        arp_freq = arp_notes[arp_step_idx]
+                        arp_t = t % (step_dur / 2)
+                        arp_env = math.exp(-6.0 * arp_t)
+                        
+                        cycle = arp_freq * t
+                        if wave_type == 'sine':
+                            arp_osc = math.sin(2 * math.pi * arp_freq * t)
+                        else:
+                            arp_osc = 2.0 * abs(2.0 * (cycle - math.floor(cycle + 0.5))) - 1.0
+                        arp_val = arp_osc * arp_env * 0.4
+                        
+                    # Synthesize basic kick drum on beat
+                    drum_val = 0.0
+                    beat_t = t % step_dur
+                    if beat_t < 0.15:
+                        kick_freq = 120 - (beat_t / 0.15) * 80
+                        kick_env = (1.0 - beat_t / 0.15) ** 2.0
+                        drum_val += math.sin(2 * math.pi * kick_freq * beat_t) * kick_env * 0.5
+                    
+                    total = chord_val * 0.35 + arp_val * 0.25 + drum_val * 0.3
+                    
+                    # Echo / Reverb filter
+                    echo_val = delay_line[delay_ptr]
+                    delay_line[delay_ptr] = total + echo_val * 0.3
+                    delay_ptr = (delay_ptr + 1) % delay_samples
+                    
+                    sample_val = total + echo_val * 0.2
+                    sample = int(sample_val * 0.22 * 32767)
+                    sample = max(-32768, min(32767, sample))
+                    data += struct.pack('<h', sample)
+                wav.writeframes(data)
+            buf.seek(0)
+            return pygame.mixer.Sound(buf)
+        except Exception:
+            return None
+
+    def _gen_victory_fanfare(self):
+        if not self.enabled: return None
+        sample_rate = 22050
+        duration = 3.0
+        num_samples = int(sample_rate * duration)
+        buf = io.BytesIO()
+        try:
+            with wave.open(buf, 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(sample_rate)
+                data = bytearray()
+                
+                notes = [261.63, 329.63, 392.00, 523.25]
+                for i in range(num_samples):
+                    t = float(i) / sample_rate
+                    note_idx = min(3, int(t / 0.4))
+                    freq = notes[note_idx]
+                    
+                    vib = 1.0 + 0.02 * math.sin(2 * math.pi * 6 * t)
+                    osc1 = math.sin(2 * math.pi * freq * vib * t)
+                    osc2 = math.sin(2 * math.pi * freq * vib * 1.01 * t)
+                    val = (osc1 + osc2) * 0.5
+                    
+                    env = 1.0 - t / duration
+                    sample = int(val * 0.25 * env * 32767)
                     sample = max(-32768, min(32767, sample))
                     data += struct.pack('<h', sample)
                 wav.writeframes(data)
@@ -406,7 +635,12 @@ class SoundManager:
                 wav.setframerate(sample_rate)
                 data = bytearray()
                 
-                # E-minor driving bass gallop sequence
+                # Echo reverb delay line buffer
+                delay_samples = int(sample_rate * 0.28)
+                delay_line = [0.0] * delay_samples
+                delay_ptr = 0
+                
+                # E-minor driving bass gallop sequence (Faster tempo at 0.13s step)
                 bass_notes = [82.41, 82.41, 98.00, 82.41, 82.41, 110.00, 82.41, 82.41]
                 
                 # Epic brass horns melody sweep (full verse layout)
@@ -429,14 +663,23 @@ class SoundManager:
                 for i in range(num_samples):
                     t = float(i) / sample_rate
                     
-                    # 1. Driving Bass Gallop (dynamic E-minor groove)
-                    bass_step = int(t / 0.18) % len(bass_notes)
+                    # 1. Driving Bass Gallop (Sawtooth E-minor groove, faster tempo)
+                    bass_step = int(t / 0.13) % len(bass_notes)
                     base_freq = bass_notes[bass_step]
-                    bass_t = t % 0.18
-                    bass_env = (1.0 - bass_t / 0.18) ** 1.6
+                    bass_t = t % 0.13
+                    bass_env = (1.0 - bass_t / 0.13) ** 1.6
                     cycle = base_freq * t
-                    bass_val = 2.0 * abs(2.0 * (cycle - math.floor(cycle + 0.5))) - 1.0
-                    bass_val = bass_val * bass_env * 0.6
+                    bass_val = 2.0 * (cycle - math.floor(cycle + 0.5)) # Sawtooth wave
+                    bass_val = bass_val * bass_env * 0.65
+                    
+                    # 1.5. Fast Synth Arpeggiator (16th notes: E5, G5, B5, D6 - high energy)
+                    arp_notes = [659.25, 783.99, 987.77, 1174.66]
+                    arp_step = int(t / 0.065) % len(arp_notes)
+                    arp_freq = arp_notes[arp_step]
+                    arp_t = t % 0.065
+                    arp_env = math.exp(-8.0 * arp_t)
+                    arp_osc = 1.0 if math.sin(2 * math.pi * arp_freq * t) > 0 else -1.0
+                    arp_val = arp_osc * arp_env * 0.18
                     
                     # 2. Epic detuned Sawtooth Brass Horn Sweep
                     brass_val = 0.0
@@ -450,35 +693,211 @@ class SoundManager:
                             v2 = 2.0 * (c2 - math.floor(c2 + 0.5))
                             brass_val += (v1 + v2) * 0.5 * env
                     
-                    # 3. Dynamic Percussion: Orchestral Kicks & Military Snare Rolls
+                    # 3. Dynamic Percussion: Heavy Kicks & Fast Snare Rolls
                     drum_val = 0.0
-                    kick_t = t % 0.72
-                    if kick_t < 0.18:
-                        kick_freq = 130 - (kick_t / 0.18) * 90
-                        kick_env = (1.0 - kick_t / 0.18) ** 2.0
-                        drum_val += math.sin(2 * math.pi * kick_freq * kick_t) * kick_env * 0.95
+                    kick_t = t % 0.52 # faster kick loop
+                    if kick_t < 0.15:
+                        kick_freq = 140 - (kick_t / 0.15) * 100
+                        kick_env = (1.0 - kick_t / 0.15) ** 2.0
+                        drum_val += math.sin(2 * math.pi * kick_freq * kick_t) * kick_env * 1.1
                     
-                    beat_step = int(t / 0.09) % 16
+                    beat_step = int(t / 0.065) % 16
                     if beat_step in (2, 3, 6, 7, 10, 11, 13, 14, 15):
-                        snare_t = t % 0.09
-                        snare_env = 1.0 - snare_t / 0.09
+                        snare_t = t % 0.065
+                        snare_env = 1.0 - snare_t / 0.065
                         noise_sample = random.uniform(-1.0, 1.0)
-                        drum_val += (noise_sample * 0.75 + math.sin(2 * math.pi * 170 * snare_t) * 0.25) * snare_env * 0.35
+                        drum_val += (noise_sample * 0.8 + math.sin(2 * math.pi * 180 * snare_t) * 0.2) * snare_env * 0.45
                     
                     # Synthesize high-frequency crash cymbal on chord boundary shifts (every 4.5s)
                     crash_t = t % 4.5
                     if crash_t < 0.8:
                         crash_env = math.exp(-4.0 * crash_t) * (1.0 - crash_t / 0.8)
-                        drum_val += random.uniform(-1.0, 1.0) * crash_env * 0.30
+                        drum_val += random.uniform(-1.0, 1.0) * crash_env * 0.35
                     
                     # High Choir pad drone to build final-phase tension
                     choir_val = 0.0
                     if t > 9.0:
                         lfo = 0.5 + 0.2 * math.sin(2 * math.pi * 0.5 * t)
-                        choir_val = math.sin(2 * math.pi * 659.25 * t) * lfo * 0.2
+                        choir_val = math.sin(2 * math.pi * 659.25 * t) * lfo * 0.25
                     
-                    total_val = (bass_val * 0.28 + brass_val * 0.36 + drum_val * 0.28 + choir_val * 0.08)
-                    sample = int(total_val * 0.18 * 32767)
+                    total_val = (bass_val * 0.25 + arp_val * 0.18 + brass_val * 0.32 + drum_val * 0.32 + choir_val * 0.08)
+                    
+                    # Apply Echo Reverb filter
+                    echo_val = delay_line[delay_ptr]
+                    delay_line[delay_ptr] = total_val + echo_val * 0.32
+                    delay_ptr = (delay_ptr + 1) % delay_samples
+                    
+                    total_val = total_val + echo_val * 0.20
+                    
+                    sample = int(total_val * 0.20 * 32767)
+                    sample = max(-32768, min(32767, sample))
+                    data += struct.pack('<h', sample)
+                wav.writeframes(data)
+            buf.seek(0)
+            return pygame.mixer.Sound(buf)
+        except Exception:
+            return None
+
+    def play_level_music(self, level):
+        """Play or switch to level-specific music."""
+        if not self.enabled:
+            return
+        if self.current_level == level:
+            return
+        self.current_level = level
+        # Get or generate music for this level
+        music = self.music_levels.get(level)
+        if music is None:
+            music = self._load_music_or_synth(f"level_{level}", "level")
+            self.music_levels[level] = music
+        # Stop previous level channel
+        if self.chan_level:
+            self.chan_level.stop()
+        # Play new music loop
+        self.chan_level = music.play(loops=-1) if music else None
+        if self.chan_level:
+            self.chan_level.set_volume(0.0) # Start at 0 volume so it can fade in smoothly
+
+    def _gen_level_music(self, zone_key):
+        """Generate retro‑electric music for a specific level or biome."""
+        if not self.enabled:
+            return None
+        
+        # Fallback zone name if zone_key is int
+        zone_name = zone_key
+        if isinstance(zone_key, int):
+            zones = ['TUTORIAL', 'ASTEROIDS', 'VULCAN', 'AQUARIS', 'NEBULA', 'PLASMA', 'SINGULARITY', 'QUANTUM', 'VOID', 'ORION']
+            zone_name = zones[zone_key % len(zones)]
+            
+        sample_rate = 22050
+        duration = 30.0
+        num_samples = int(sample_rate * duration)
+        buf = io.BytesIO()
+        try:
+            with wave.open(buf, 'wb') as wav:
+                wav.setnchannels(1)
+                wav.setsampwidth(2)
+                wav.setframerate(sample_rate)
+                data = bytearray()
+                
+                # Determine music style based on zone_name
+                tempo_bpm = 120
+                wave_type = 'triangle'
+                root_hz = 65.41  # C2
+                use_arp = False
+                
+                if zone_name == 'TUTORIAL':
+                    tempo_bpm = 100
+                    wave_type = 'sine'
+                    root_hz = 73.42  # D2 (calm, neutral)
+                elif zone_name == 'ASTEROIDS':
+                    tempo_bpm = 125
+                    wave_type = 'square'
+                    root_hz = 55.00  # A1 (low, heavy)
+                elif zone_name == 'VULCAN':
+                    tempo_bpm = 150  # Fast!
+                    wave_type = 'sawtooth'
+                    root_hz = 82.41  # E2 (aggressive, driving)
+                    use_arp = True
+                elif zone_name == 'AQUARIS':
+                    tempo_bpm = 105
+                    wave_type = 'sine'
+                    root_hz = 98.00  # G2 (high, crystalline)
+                    use_arp = True
+                elif zone_name == 'NEBULA':
+                    tempo_bpm = 115
+                    wave_type = 'sawtooth'
+                    root_hz = 58.27  # A#1 (unstable)
+                elif zone_name == 'PLASMA':
+                    tempo_bpm = 130
+                    wave_type = 'triangle'
+                    root_hz = 65.41  # C2 (pulsing)
+                    use_arp = True
+                elif zone_name == 'SINGULARITY':
+                    tempo_bpm = 140
+                    wave_type = 'square'
+                    root_hz = 49.00  # G1 (deep reactor hum)
+                elif zone_name == 'QUANTUM':
+                    tempo_bpm = 110
+                    wave_type = 'sine'
+                    root_hz = 77.78  # D#2 (detuned, shifting)
+                elif zone_name == 'VOID':
+                    tempo_bpm = 90   # Very slow
+                    wave_type = 'sine'
+                    root_hz = 41.20  # E1 (extremely deep abyss)
+                elif zone_name == 'ORION':
+                    tempo_bpm = 135
+                    wave_type = 'sawtooth'
+                    root_hz = 65.41  # C2 (epic fortress)
+                    use_arp = True
+                
+                # Chord progression
+                chords = [
+                    [root_hz, root_hz * 1.25, root_hz * 1.5],
+                    [root_hz * 0.9, root_hz * 1.12, root_hz * 1.35],
+                    [root_hz * 1.1, root_hz * 1.37, root_hz * 1.65],
+                    [root_hz * 0.95, root_hz * 1.18, root_hz * 1.42]
+                ]
+                
+                step_dur = 60.0 / tempo_bpm
+                
+                delay_samples = int(sample_rate * 0.3)
+                delay_line = [0.0] * delay_samples
+                delay_ptr = 0
+                
+                for i in range(num_samples):
+                    t = float(i) / sample_rate
+                    chord_idx = int((t / (step_dur * 8))) % len(chords)
+                    notes = chords[chord_idx]
+                    
+                    # Synthesize Chords
+                    chord_val = 0.0
+                    for freq in notes:
+                        cycle = freq * t
+                        if wave_type == 'square':
+                            osc = 1.0 if math.sin(2 * math.pi * freq * t) > 0 else -1.0
+                        elif wave_type == 'sawtooth':
+                            osc = 2.0 * (cycle - math.floor(cycle + 0.5))
+                        elif wave_type == 'sine':
+                            osc = math.sin(2 * math.pi * freq * t)
+                        else: # triangle
+                            osc = 2.0 * abs(2.0 * (cycle - math.floor(cycle + 0.5))) - 1.0
+                        chord_val += osc
+                    chord_val /= len(notes)
+                    
+                    # Synthesize Arpeggiator (retro melody)
+                    arp_val = 0.0
+                    if use_arp:
+                        arp_notes = [notes[0]*2, notes[1]*2, notes[2]*2, notes[1]*3]
+                        arp_step_idx = int(t / (step_dur / 2)) % len(arp_notes)
+                        arp_freq = arp_notes[arp_step_idx]
+                        arp_t = t % (step_dur / 2)
+                        arp_env = math.exp(-6.0 * arp_t)
+                        
+                        cycle = arp_freq * t
+                        if wave_type == 'sine':
+                            arp_osc = math.sin(2 * math.pi * arp_freq * t)
+                        else:
+                            arp_osc = 2.0 * abs(2.0 * (cycle - math.floor(cycle + 0.5))) - 1.0
+                        arp_val = arp_osc * arp_env * 0.4
+                        
+                    # Synthesize basic kick drum on beat
+                    drum_val = 0.0
+                    beat_t = t % step_dur
+                    if beat_t < 0.15:
+                        kick_freq = 120 - (beat_t / 0.15) * 80
+                        kick_env = (1.0 - beat_t / 0.15) ** 2.0
+                        drum_val += math.sin(2 * math.pi * kick_freq * beat_t) * kick_env * 0.5
+                    
+                    total = chord_val * 0.35 + arp_val * 0.25 + drum_val * 0.3
+                    
+                    # Echo / Reverb filter
+                    echo_val = delay_line[delay_ptr]
+                    delay_line[delay_ptr] = total + echo_val * 0.3
+                    delay_ptr = (delay_ptr + 1) % delay_samples
+                    
+                    sample_val = total + echo_val * 0.2
+                    sample = int(sample_val * 0.22 * 32767)
                     sample = max(-32768, min(32767, sample))
                     data += struct.pack('<h', sample)
                 wav.writeframes(data)
@@ -527,19 +946,49 @@ class SoundManager:
         # Start loops if not running
         if self.chan_ambient is None and self.music_ambient:
             self.chan_ambient = self.music_ambient.play(loops=-1)
+            if self.chan_ambient: self.chan_ambient.set_volume(0.0)
         if self.chan_boss is None and self.music_boss:
             self.chan_boss = self.music_boss.play(loops=-1)
             if self.chan_boss: self.chan_boss.set_volume(0.0)
             
-        target_ambient = self.volume * 0.5 if not wants_boss else 0.0
-        target_boss = self.volume * 0.7 if wants_boss else 0.0
+        # Target volumes for each channel
+        target_ambient = 0.0
+        target_boss = 0.0
+        target_level = 0.0
+
+        if game_state == 'LOADING':
+            target_ambient = 0.0
+            target_boss = 0.0
+            target_level = 0.0
+        elif game_state == 'HUB':
+            target_ambient = self.volume * 0.5
+            target_boss = 0.0
+            target_level = 0.0
+        elif game_state in ('PLAYING', 'PAUSED'):
+            if wants_boss:
+                target_ambient = 0.0
+                target_boss = self.volume * 0.8
+                target_level = 0.0
+            else:
+                target_ambient = 0.0
+                target_boss = 0.0
+                target_level = self.volume * 0.5
+        elif game_state == 'MAIN_MENU':
+            target_ambient = self.volume * 0.5
+            target_boss = 0.0
+            target_level = 0.0
+            
+        fade_speed = 0.05
         
         if self.chan_ambient:
-            cur_vol = self.chan_ambient.get_volume()
-            self.chan_ambient.set_volume(cur_vol + (target_ambient - cur_vol) * 0.05)
+            cur = self.chan_ambient.get_volume()
+            self.chan_ambient.set_volume(cur + (target_ambient - cur) * fade_speed)
         if self.chan_boss:
-            cur_vol = self.chan_boss.get_volume()
-            self.chan_boss.set_volume(cur_vol + (target_boss - cur_vol) * 0.05)
+            cur = self.chan_boss.get_volume()
+            self.chan_boss.set_volume(cur + (target_boss - cur) * fade_speed)
+        if self.chan_level:
+            cur = self.chan_level.get_volume()
+            self.chan_level.set_volume(cur + (target_level - cur) * fade_speed)
 
         # Engine droning loop management
         if game_state in ('PLAYING', 'HUB') and 'engine' in self.sounds and self.sounds['engine']:
@@ -547,8 +996,9 @@ class SoundManager:
                 self.chan_engine = self.sounds['engine'].play(loops=-1)
             
             if self.chan_engine:
-                # Dynamic volume based on whether the player is moving
                 target_engine_vol = self.volume * 0.15 if is_moving else self.volume * 0.04
+                if game_state == 'LOADING':
+                    target_engine_vol = 0.0
                 cur_engine_vol = self.chan_engine.get_volume()
                 self.chan_engine.set_volume(cur_engine_vol + (target_engine_vol - cur_engine_vol) * 0.1)
         else:
@@ -652,7 +1102,9 @@ class LootPickup:
                 py = draw_y + int(r_in * math.sin(ang))
                 points_in.append((px, py))
             pygame.draw.polygon(screen, WHITE, points_in, width=1)
+# endregion
 
+# region GAME CONFIGURATIONS
 BIOME_CONFIGS = {
     'TUTORIAL': {'name': 'Training Range', 'theme_color': GREEN, 'desc': 'No-Damage Practice', 'stars_color': GREEN, 'hub': 1, 'order': 3, 'boss_count': 0},
     'ASTEROIDS': {'name': 'Asteroid Belt', 'theme_color': GRAY, 'desc': 'Heavy Meteor Shower', 'stars_color': GRAY, 'hub': 1, 'order': 0, 'boss_count': 0},
@@ -736,8 +1188,9 @@ NPC_INFO = {
         }
     }
 }
+# endregion
 
-
+# region PROJECTILES & WEAPONS
 class Bullet:
     def __init__(self, x, y, dx, dy, speed=19.8, life=100, piercing=False, damage=1.0, color=(255, 255, 0)):
         self.x = x
@@ -1123,8 +1576,9 @@ class Flare:
         alpha = int(255 * (self.life_timer / self.life_time))
         pulse = int(4 * math.sin(pygame.time.get_ticks() * 0.02))
         pygame.draw.circle(screen, (*self.color, alpha // 2), (int(draw_x), int(draw_y)), self.radius + pulse)
-        pygame.draw.circle(screen, (*WHITE, alpha), (int(draw_x), int(draw_y)), self.radius)
+# endregion
 
+# region ENVIRONMENTAL ENTITIES
 class Particle:
     def __init__(self, x, y, color):
         self.x = x
@@ -1238,7 +1692,9 @@ class ShockwaveRing:
         r = int(self.max_radius * progress)
         if r > 0:
             pygame.draw.circle(screen, self.color, (draw_x, draw_y), r, width=1)
+# endregion
 
+# region GAME ENTITIES (ENEMIES & PLAYER)
 class EnemyBullet:
     def __init__(self, x, y, dx, dy, color=(255, 100, 100), speed=6.6, size=8, is_gravity=False, is_homing=False, target_player=None, telegraph_frames=6, life_time=0, shooter=None):
         self.x = x
@@ -3258,6 +3714,9 @@ class Player:
             self.xp -= self.xp_to_next_level()
             self.level += 1
             self.skill_points += 1
+            # Play level-specific music when level changes
+            if SOUNDS and SOUNDS.enabled:
+                SOUNDS.play(f'level_{self.level}')
             self.max_shields = max(3, self.max_shields + 1)
             self.shields = min(self.max_shields, self.shields + 1)
 
@@ -3753,7 +4212,48 @@ class Player:
                 # Add a subtle interior glow when hit
                 fill_color = (0, 255, 255, 45)
                 pygame.draw.circle(shield_surf, fill_color, (radius + 5, radius + 5), radius - width_val)
-            screen.blit(shield_surf, (int(center_x - radius - 5), int(center_y - radius - 5)))
+# endregion
+
+# region MAIN ENGINE & EVENT ROUTER
+class SpatialGrid:
+    def __init__(self, cell_size=200):
+        self.cell_size = cell_size
+        self.grid = {}
+
+    def clear(self):
+        self.grid.clear()
+
+    def insert(self, entity):
+        if not hasattr(entity, 'rect') or entity.rect is None:
+            return
+        rect = entity.rect
+        start_x = int(rect.left // self.cell_size)
+        end_x = int(rect.right // self.cell_size)
+        start_y = int(rect.top // self.cell_size)
+        end_y = int(rect.bottom // self.cell_size)
+        for gx in range(start_x, end_x + 1):
+            for gy in range(start_y, end_y + 1):
+                key = (gx, gy)
+                if key not in self.grid:
+                    self.grid[key] = []
+                self.grid[key].append(entity)
+
+    def get_nearby_of_type(self, rect, entity_types):
+        if rect is None:
+            return set()
+        start_x = int(rect.left // self.cell_size)
+        end_x = int(rect.right // self.cell_size)
+        start_y = int(rect.top // self.cell_size)
+        end_y = int(rect.bottom // self.cell_size)
+        nearby = set()
+        for gx in range(start_x, end_x + 1):
+            for gy in range(start_y, end_y + 1):
+                key = (gx, gy)
+                if key in self.grid:
+                    for ent in self.grid[key]:
+                        if isinstance(ent, entity_types):
+                            nearby.add(ent)
+        return nearby
 
 class Game:
     def __init__(self):
@@ -3891,6 +4391,9 @@ class Game:
             self.offset_y = (SCREEN_HEIGHT - self.new_height) // 2
 
     def reset_game(self):
+        self.spatial_grid = SpatialGrid()
+        self.bullet_pool = []
+        self.particle_pool = []
         self.player = Player()
         self.player.set_class(self.selected_class)
         self.bullets = []
@@ -4437,7 +4940,12 @@ class Game:
             SOUNDS.play('explosion')
         for _ in range(count):
             color = random.choice(color_palette)
-            self.particles.append(Particle(x, y, color))
+            if self.particle_pool:
+                p = self.particle_pool.pop()
+                p.__init__(x, y, color)
+            else:
+                p = Particle(x, y, color)
+            self.particles.append(p)
         if count >= 10:
             ring_color = color_palette[0] if color_palette else CYAN
             self.shockwaves.append(ShockwaveRing(x, y, count * 3, ring_color))
@@ -4462,6 +4970,10 @@ class Game:
             })
 
     def _damage_player(self, current_time, damage=1.0, sound_type='hit'):
+        # Reduce damage in the first 3 levels (HUB 1 sectors) by 10%
+        if getattr(self, 'current_zone', '') in ('ASTEROIDS', 'VULCAN', 'AQUARIS'):
+            damage *= 0.90
+            
         if damage <= 0:
             return
         if self.player.is_dead or self.player.invulnerable or self.debug_invincible:
@@ -4747,6 +5259,9 @@ class Game:
                 SCREEN_WIDTH, SCREEN_HEIGHT = event.w, event.h
                 self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
                 self._update_scaling()
+                
+            if self.state == 'LOADING':
+                continue
             
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 self.dragging_volume = False
@@ -5482,8 +5997,37 @@ class Game:
                         self.input_active = True
 
     def _update(self):
+        # Populate Spatial Grid
+        self.spatial_grid.clear()
+        boss_ents = []
+        if self.boss and not self.boss.is_dead:
+            boss_ents = [self.boss] + [ent for ent in self.boss.sub_bosses if not ent.is_dead]
+            if hasattr(self.boss, 'shield_crystals'):
+                boss_ents.extend(self.boss.shield_crystals)
+        
+        for entity_list in [self.enemies, boss_ents, self.meteors, self.static_obstacles, 
+                            self.derelicts, self.anomalies, self.shield_crystals, 
+                            self.enemy_bullets, self.bullets, self.torpedoes, 
+                            self.bombs, self.missiles]:
+            for entity in entity_list:
+                self.spatial_grid.insert(entity)
+
         current_time = pygame.time.get_ticks()
         self.zoom_level = 1.0
+        
+        if self.state == 'LOADING':
+            elapsed = current_time - self.loading_started_time
+            if SOUNDS and SOUNDS.enabled:
+                SOUNDS.update_music(False, game_state='LOADING', is_moving=False)
+            if elapsed >= self.loading_duration:
+                if self.loading_target_zone == 'HUB':
+                    self.state = 'HUB'
+                    self.current_zone = 'HUB'
+                else:
+                    self.setup_exploration_zone(self.loading_target_zone)
+                    if SOUNDS and SOUNDS.enabled:
+                        SOUNDS.play_level_music(self.loading_target_zone)
+            return
         
         # Dynamic Music crossfade
         if SOUNDS and SOUNDS.enabled:
@@ -5581,7 +6125,12 @@ class Game:
             rear_center = pygame.math.Vector2(self.player.x + self.player.width // 2, self.player.y + self.player.height // 2) - dir_f * (self.player.height // 2)
             
             for _ in range(2):
-                p = Particle(rear_center.x + random.uniform(-4, 4), rear_center.y + random.uniform(-4, 4), random.choice([(255, 69, 0), (255, 140, 0), (255, 215, 0)]))
+                color = random.choice([(255, 69, 0), (255, 140, 0), (255, 215, 0)])
+                if self.particle_pool:
+                    p = self.particle_pool.pop()
+                    p.__init__(rear_center.x + random.uniform(-4, 4), rear_center.y + random.uniform(-4, 4), color)
+                else:
+                    p = Particle(rear_center.x + random.uniform(-4, 4), rear_center.y + random.uniform(-4, 4), color)
                 p.dx = -dir_f.x * random.uniform(2, 5) + random.uniform(-1, 1)
                 p.dy = -dir_f.y * random.uniform(2, 5) + random.uniform(-1, 1)
                 p.radius = random.randint(2, 4)
@@ -5589,14 +6138,19 @@ class Game:
                 p.max_life = p.life
                 self.particles.append(p)
 
-        for particle in self.particles[:]:
-            particle.update()
-            if particle.life <= 0:
-                self.particles.remove(particle)
+        # Optimized particle update loop in O(N) with pooling
+        active_particles = []
+        for p in self.particles:
+            p.update()
+            if p.life > 0:
+                active_particles.append(p)
+            else:
+                if type(p) is Particle and len(self.particle_pool) < 2000:
+                    self.particle_pool.append(p)
+        self.particles = active_particles
 
-        for sw in self.shockwaves[:]:
-            if not sw.update():
-                self.shockwaves.remove(sw)
+        # Optimized shockwave update loop in O(N) instead of O(N^2)
+        self.shockwaves = [sw for sw in self.shockwaves if sw.update()]
 
         for loot in self.loot_pickups[:]:
             loot.update()
@@ -5651,7 +6205,10 @@ class Game:
                     if player_vec.distance_to(cheat_portal_pos) < 25:
                         self.unlocked_zones[zone] = True
                         self.current_hub_index = BIOME_CONFIGS[zone]['hub']
-                        self.setup_exploration_zone(zone)
+                        self.state = 'LOADING'
+                        self.loading_target_zone = zone
+                        self.loading_duration = 1500
+                        self.loading_started_time = pygame.time.get_ticks()
                         self.wormhole_charge_timer = 0
                         self.active_hub_portal = None
                         return
@@ -5703,7 +6260,10 @@ class Game:
 
                 if self.wormhole_charge_timer >= target_charge:
                     self.zoom_level = 1.0
-                    self.setup_exploration_zone(active_portal)
+                    self.state = 'LOADING'
+                    self.loading_target_zone = active_portal
+                    self.loading_duration = 2500
+                    self.loading_started_time = pygame.time.get_ticks()
                     self.wormhole_charge_timer = 0
                     self.active_hub_portal = None
             else:
@@ -6011,6 +6571,12 @@ class Game:
                     self.wormhole_spawned = False
                     self.zoom_level = 1.0
                     
+                    if self.state == 'HUB':
+                        self.state = 'LOADING'
+                        self.loading_target_zone = 'HUB'
+                        self.loading_duration = 2500
+                        self.loading_started_time = pygame.time.get_ticks()
+                    
                     # Trigger autosave when warping back to Hub
                     success, msg = SaveManager.write_save(self)
                     self.save_feedback_msg = "SYSTEM: AUTOSAVED" if success else "SYSTEM: AUTOSAVE FAILED"
@@ -6193,13 +6759,13 @@ class Game:
         actual_meteor_delay = self.meteor_spawn_delay
         
         if self.current_zone == 'ASTEROIDS':
-            actual_enemy_delay = 3500 # 45% faster
+            actual_enemy_delay = 4500 # Slower spawning (was 3500)
             actual_meteor_delay = 1200
         elif self.current_zone == 'VULCAN':
-            actual_enemy_delay = 2500 # 48% faster
+            actual_enemy_delay = 3500 # Slower spawning (was 2500)
             actual_meteor_delay = 5000
         else: # Slower spawning for all other zones after asteroids/vulcan
-            actual_enemy_delay = 5000 # 58% faster
+            actual_enemy_delay = 6500 # Slower spawning (was 5000)
             actual_meteor_delay = 4000
             
         if self.boss is None and not self.boss_defeated and not getattr(self, 'wormhole_spawned', False):
@@ -6575,90 +7141,123 @@ class Game:
                     if obs in self.static_obstacles:
                         self.static_obstacles.remove(obs)
         
-        # Bullet vs Enemy Laser collision
+        # Bullet vs Enemy Laser collision (using SpatialGrid)
         for bullet in self.bullets[:]:
-            for eb in self.enemy_bullets[:]:
-                if bullet.rect.colliderect(eb.rect):
-                    if bullet in self.bullets: self.bullets.remove(bullet)
-                    if eb in self.enemy_bullets: self.enemy_bullets.remove(eb)
+            nearby_eb = self.spatial_grid.get_nearby_of_type(bullet.rect, EnemyBullet)
+            for eb in nearby_eb:
+                if bullet in self.bullets and eb in self.enemy_bullets:
+                    self.bullets.remove(bullet)
+                    if len(self.bullet_pool) < 500: self.bullet_pool.append(bullet)
+                    self.enemy_bullets.remove(eb)
                     self.spawn_explosion(eb.x, eb.y, [(255, 255, 255), (100, 100, 255)], 6)
         
-        # Bullet vs Enemy collision
+        # Bullet vs Entities collision (using SpatialGrid)
         for bullet in self.bullets[:]:
-            for enemy in self.enemies[:]:
-                if abs(bullet.y - enemy.y) > 150: continue
-                if getattr(enemy, 'is_phased', False): continue
-                if bullet.rect.colliderect(enemy.rect):
-                    if getattr(self.player, 'has_mod_siphon', False) and self.player.shields < self.player.max_shields:
-                        self.player.shields = min(self.player.max_shields, self.player.shields + 0.05)
-                    if not bullet.piercing and bullet in self.bullets:
-                        self.bullets.remove(bullet)
-                    if self.is_enemy_shielded(enemy):
-                        self.spawn_explosion(bullet.x, bullet.y, [(0, 255, 255), (255, 255, 255)], 6)
-                    else:
-                        enemy.health -= 0.5 * self.player.damage_multiplier
-                        enemy.health -= bullet.damage * self.player.damage_multiplier
+            if bullet not in self.bullets:
+                continue
+            nearby = self.spatial_grid.get_nearby_of_type(bullet.rect, (Enemy, DerelictHull, Anomaly, Meteor, FactoryStructure, ShieldCrystal))
+            for ent in nearby:
+                if bullet not in self.bullets:
+                    break
+                
+                # Bullet vs Enemy
+                if isinstance(ent, Enemy):
+                    if getattr(ent, 'is_phased', False): continue
+                    if bullet.rect.colliderect(ent.rect):
+                        if getattr(self.player, 'has_mod_siphon', False) and self.player.shields < self.player.max_shields:
+                            self.player.shields = min(self.player.max_shields, self.player.shields + 0.05)
+                        if not bullet.piercing and bullet in self.bullets:
+                            self.bullets.remove(bullet)
+                            if len(self.bullet_pool) < 500: self.bullet_pool.append(bullet)
+                        if self.is_enemy_shielded(ent):
+                            self.spawn_explosion(bullet.x, bullet.y, [(0, 255, 255), (255, 255, 255)], 6)
+                        else:
+                            ent.health -= 0.5 * self.player.damage_multiplier
+                            ent.health -= bullet.damage * self.player.damage_multiplier
+                            self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                            if SOUNDS: SOUNDS.play_spatial('metal_hit', bullet.x, bullet.y, self.player.x, self.player.y)
+                            if ent.health <= 0:
+                                self.spawn_explosion(ent.rect.centerx, ent.rect.centery, 
+                                                     [(255, 0, 0), (255, 128, 0), (255, 255, 0)], 15)
+                                self._kill_enemy(ent)
+
+                # Bullet vs Derelict
+                elif isinstance(ent, DerelictHull):
+                    if bullet.rect.colliderect(ent.rect):
+                        if not bullet.piercing and bullet in self.bullets:
+                            self.bullets.remove(bullet)
+                            if len(self.bullet_pool) < 500: self.bullet_pool.append(bullet)
+                        ent.health -= bullet.damage * self.player.damage_multiplier
                         self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
                         if SOUNDS: SOUNDS.play_spatial('metal_hit', bullet.x, bullet.y, self.player.x, self.player.y)
-                        if enemy.health <= 0:
-                            self.spawn_explosion(enemy.rect.centerx, enemy.rect.centery, 
-                                                 [(255, 0, 0), (255, 128, 0), (255, 255, 0)], 15)
-                            self._kill_enemy(enemy)
-                            
-            for d in self.derelicts[:]:
-                if bullet.rect.colliderect(d.rect):
-                    if not bullet.piercing and bullet in self.bullets:
-                        self.bullets.remove(bullet)
-                    d.health -= bullet.damage * self.player.damage_multiplier
-                    self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
-                    if SOUNDS: SOUNDS.play_spatial('metal_hit', bullet.x, bullet.y, self.player.x, self.player.y)
-                    if d.health <= 0:
-                        self.spawn_explosion(d.x, d.y, [(200,100,50), (100,50,20)], 20)
-                        for _ in range(random.randint(5, 10)):
-                            self.scraps.append(Scrap(d.x + random.randint(-20, 20), d.y + random.randint(-20, 20)))
-                        if d in self.derelicts: self.derelicts.remove(d)
-            for a in self.anomalies[:]:
-                if bullet.rect.colliderect(a.rect):
-                    if not bullet.piercing and bullet in self.bullets:
-                        self.bullets.remove(bullet)
-                    self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
-                    self.detonate_anomaly(a)
-                        
-        # Bullet vs Meteor collision
-        for bullet in self.bullets[:]:
-            for meteor in self.meteors[:]:
-                if bullet.rect.colliderect(meteor.rect):
-                    if not bullet.piercing and bullet in self.bullets: 
-                        self.bullets.remove(bullet)
-                    if meteor in self.meteors:
-                        self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
-                        self._destroy_meteor(meteor)
+                        if ent.health <= 0:
+                            self.spawn_explosion(ent.x, ent.y, [(200,100,50), (100,50,20)], 20)
+                            for _ in range(random.randint(5, 10)):
+                                self.scraps.append(Scrap(ent.x + random.randint(-20, 20), ent.y + random.randint(-20, 20)))
+                            if ent in self.derelicts: self.derelicts.remove(ent)
 
-        # Bullet vs Static Obstacle
-        for bullet in self.bullets[:]:
-            for obs in self.static_obstacles[:]:
-                if bullet.rect.colliderect(obs.rect):
-                    if not bullet.piercing and bullet in self.bullets:
-                        self.bullets.remove(bullet)
-                    self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
-                    if SOUNDS: SOUNDS.play_spatial('metal_hit', bullet.x, bullet.y, self.player.x, self.player.y)
-                    if hasattr(obs, 'health'):
-                        if isinstance(obs, FactoryStructure):
-                            pass
+                # Bullet vs Anomaly
+                elif isinstance(ent, Anomaly):
+                    if bullet.rect.colliderect(ent.rect):
+                        if not bullet.piercing and bullet in self.bullets:
+                            self.bullets.remove(bullet)
+                            if len(self.bullet_pool) < 500: self.bullet_pool.append(bullet)
+                        self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                        self.detonate_anomaly(ent)
+
+                # Bullet vs Meteor
+                elif isinstance(ent, Meteor):
+                    if bullet.rect.colliderect(ent.rect):
+                        if not bullet.piercing and bullet in self.bullets:
+                            self.bullets.remove(bullet)
+                            if len(self.bullet_pool) < 500: self.bullet_pool.append(bullet)
+                        if ent in self.meteors:
+                            self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                            self._destroy_meteor(ent)
+
+                # Bullet vs ShieldCrystal
+                elif isinstance(ent, ShieldCrystal):
+                    if bullet.rect.colliderect(ent.rect):
+                        if not bullet.piercing and bullet in self.bullets:
+                            self.bullets.remove(bullet)
+                            if len(self.bullet_pool) < 500: self.bullet_pool.append(bullet)
+                        ent.health -= 0.5
+                        self.spawn_explosion(ent.x, ent.y, [(0, 255, 255), (255, 255, 255)], 8)
+                        if ent.health <= 0:
+                            if ent in self.shield_crystals:
+                                self.shield_crystals.remove(ent)
+                                self.player.add_credits(40)
+                                self.spawn_explosion(ent.x, ent.y, [(0, 255, 255), (255, 255, 255)], 25)
+                            elif self.boss and hasattr(self.boss, 'shield_crystals') and ent in self.boss.shield_crystals:
+                                self.boss.shield_crystals.remove(ent)
+                                self.player.add_credits(50)
+                                self.spawn_explosion(ent.x, ent.y, [(0, 255, 255), (255, 255, 255)], 25)
+
+                # Bullet vs Static Obstacle
+                elif hasattr(ent, 'credits_value'):
+                    if bullet.rect.colliderect(ent.rect):
+                        if not bullet.piercing and bullet in self.bullets:
+                            self.bullets.remove(bullet)
+                            if len(self.bullet_pool) < 500: self.bullet_pool.append(bullet)
+                        self.spawn_explosion(bullet.x, bullet.y, [bullet.color, WHITE], 6)
+                        if SOUNDS: SOUNDS.play_spatial('metal_hit', bullet.x, bullet.y, self.player.x, self.player.y)
+                        if hasattr(ent, 'health'):
+                            if isinstance(ent, FactoryStructure):
+                                pass
+                            else:
+                                ent.health -= bullet.damage * self.player.damage_multiplier
+                                if ent.health <= 0:
+                                    self.spawn_explosion(ent.rect.centerx, ent.rect.centery, 
+                                                         [(110, 110, 115), (70, 70, 75)], 25)
+                                    if ent in self.static_obstacles:
+                                        self.static_obstacles.remove(ent)
+                                    self.player.add_credits(ent.credits_value)
                         else:
-                            obs.health -= bullet.damage * self.player.damage_multiplier
-                            if obs.health <= 0:
-                                self.spawn_explosion(obs.rect.centerx, obs.rect.centery, 
-                                                     [(110, 110, 115), (70, 70, 75)], 25)
-                                if obs in self.static_obstacles:
-                                    self.static_obstacles.remove(obs)
-                                self.player.add_credits(obs.credits_value)
-                    else:
-                        self.spawn_explosion(obs.rect.centerx, obs.rect.centery, 
-                                             [(128, 128, 128), (80, 80, 80)], 20)
-                        if obs in self.static_obstacles:
-                            self.static_obstacles.remove(obs)
-                        self.player.add_credits(obs.credits_value)
+                            self.spawn_explosion(ent.rect.centerx, ent.rect.centery, 
+                                                 [(128, 128, 128), (80, 80, 80)], 20)
+                            if ent in self.static_obstacles:
+                                self.static_obstacles.remove(ent)
+                            self.player.add_credits(ent.credits_value)
 
         # Torpedo trigger and AOE logic
         for torpedo in self.torpedoes[:]:
@@ -6781,29 +7380,7 @@ class Game:
                             self.spawn_explosion(eb.x, eb.y, [(255, 255, 255), (100, 100, 255)], 6)
                             self.enemy_bullets.remove(eb)
 
-        # Player Bullet vs Shield Crystals (Level crystals & Boss crystals)
-        for bullet in self.bullets[:]:
-            for crystal in self.shield_crystals[:]:
-                if bullet.rect.colliderect(crystal.rect):
-                    if not bullet.piercing and bullet in self.bullets: 
-                        self.bullets.remove(bullet)
-                    crystal.health -= 0.5
-                    self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 8)
-                    if crystal.health <= 0:
-                        if crystal in self.shield_crystals: self.shield_crystals.remove(crystal)
-                        self.player.add_credits(40)
-                        self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 25)
-
-            if self.boss and self.boss.zone == 'AQUARIS' and not self.boss.is_dead:
-                for crystal in self.boss.shield_crystals[:]:
-                    if crystal.health > 0 and bullet.rect.colliderect(crystal.rect):
-                        if not bullet.piercing and bullet in self.bullets:
-                            self.bullets.remove(bullet)
-                        crystal.health -= 0.5
-                        self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 8)
-                        if crystal.health <= 0:
-                            self.player.add_credits(50)
-                            self.spawn_explosion(crystal.x, crystal.y, [(0, 255, 255), (255, 255, 255)], 25)
+        # Bullet vs Shield Crystals handled in main spatial grid loop above
 
         # Player Torpedo vs Shield Crystals
         for torpedo in self.torpedoes[:]:
@@ -7824,7 +8401,118 @@ class Game:
             launch_lbl = self.font.render("LAUNCH MISSION", True, BLACK if launch_color == GREEN else WHITE)
             surf.blit(launch_lbl, (launch_btn.centerx - launch_lbl.get_width() // 2, launch_btn.centery - launch_lbl.get_height() // 2))
 
+    def _draw_loading_screen(self):
+        self.virtual_screen.fill(BLACK)
+        ticks = pygame.time.get_ticks()
+        
+        elapsed = ticks - self.loading_started_time
+        progress = min(1.0, elapsed / float(self.loading_duration))
+        
+        # Get target zone name and configuration
+        zone = self.loading_target_zone
+        cfg = BIOME_CONFIGS.get(zone, {'name': 'Safe Haven Hub', 'theme_color': (0, 150, 255)})
+        theme_color = cfg['theme_color']
+        
+        # Draw background grids/particles for texture
+        self._draw_cyber_grid(self.virtual_screen, ticks * 0.02, ticks * 0.02, (theme_color[0] // 5, theme_color[1] // 5, theme_color[2] // 5))
+        
+        # Draw some moving star particles inside virtual screen
+        random.seed(42)  # consistent stars
+        for _ in range(30):
+            sx = random.randint(0, VIRTUAL_WIDTH)
+            sy = random.randint(0, VIRTUAL_HEIGHT)
+            sz = random.uniform(1.0, 3.0)
+            star_color = (theme_color[0] // 2, theme_color[1] // 2, theme_color[2] // 2)
+            pygame.draw.circle(self.virtual_screen, star_color, (sx, sy), int(sz))
+        random.seed()
+        
+        # Title text
+        loading_text = "ESTABLISHING WORMHOLE WARP..." if zone != 'HUB' else "RETURNING TO HUB STATION..."
+        dest_text = f"TARGET SECTOR: {cfg['name'].upper()}" if zone != 'HUB' else "DOCKING WITH SAFE HAVEN..."
+        
+        lbl_load = self.font.render(loading_text, True, theme_color)
+        lbl_dest = self.large_font.render(dest_text, True, WHITE)
+        
+        # Subtitle pulse glow
+        glow = int(128 + 127 * math.sin(ticks * 0.008))
+        glow_color = (theme_color[0] * glow // 255, theme_color[1] * glow // 255, theme_color[2] * glow // 255)
+        
+        # Centered position
+        cx = VIRTUAL_WIDTH // 2
+        cy = VIRTUAL_HEIGHT // 2
+        
+        self.virtual_screen.blit(lbl_load, (cx - lbl_load.get_width() // 2, cy - 100))
+        self.virtual_screen.blit(lbl_dest, (cx - lbl_dest.get_width() // 2, cy - 50))
+        
+        # Progress Bar container
+        bar_w = 600
+        bar_h = 10
+        bar_x = cx - bar_w // 2
+        bar_y = cy + 40
+        
+        # Draw progress bar track
+        pygame.draw.rect(self.virtual_screen, (40, 40, 45), (bar_x, bar_y, bar_w, bar_h), border_radius=5)
+        pygame.draw.rect(self.virtual_screen, theme_color, (bar_x - 2, bar_y - 2, bar_w + 4, bar_h + 4), width=1, border_radius=6)
+        
+        # Draw filled progress
+        if progress > 0:
+            fill_w = int(bar_w * progress)
+            pygame.draw.rect(self.virtual_screen, theme_color, (bar_x, bar_y, fill_w, bar_h), border_radius=5)
+            
+            # Glow end of progress bar
+            glow_x = bar_x + fill_w
+            pygame.draw.circle(self.virtual_screen, WHITE, (glow_x, bar_y + bar_h // 2), 6)
+            pygame.draw.circle(self.virtual_screen, theme_color, (glow_x, bar_y + bar_h // 2), 12, width=1)
+            
+        # Percentage indicator
+        pct_text = f"{int(progress * 100)}%"
+        lbl_pct = self.font.render(pct_text, True, WHITE)
+        self.virtual_screen.blit(lbl_pct, (cx - lbl_pct.get_width() // 2, bar_y + 20))
+        
+        # Rotating Vector Radar Graphic on the side (retro wireframe loading circles)
+        radar_r = 70
+        radar_x = cx
+        radar_y = cy - 220
+        
+        # Draw concentric rings
+        pygame.draw.circle(self.virtual_screen, (theme_color[0] // 3, theme_color[1] // 3, theme_color[2] // 3), (radar_x, radar_y), radar_r, width=1)
+        pygame.draw.circle(self.virtual_screen, (theme_color[0] // 2, theme_color[1] // 2, theme_color[2] // 2), (radar_x, radar_y), int(radar_r * 0.6), width=1)
+        pygame.draw.circle(self.virtual_screen, theme_color, (radar_x, radar_y), int(radar_r * 0.2), width=1)
+        
+        # Sweeping scanner line
+        angle = math.radians(ticks * 0.2)
+        end_x = radar_x + int(radar_r * math.cos(angle))
+        end_y = radar_y + int(radar_r * math.sin(angle))
+        pygame.draw.line(self.virtual_screen, theme_color, (radar_x, radar_y), (end_x, end_y), 2)
+        
+        # Sweeping scanner dot
+        pygame.draw.circle(self.virtual_screen, glow_color, (end_x, end_y), 5)
+        
+        # Scrolling fake console diagnostics matching the biome
+        diagnostics = [
+            "CALIBRATING HYPERDRIVE CAPACITORS...",
+            "GENERATING STELLAR COHERENCY FIELD...",
+            "SYNCING QUANTUM COORDINATES...",
+            "COMPILING SYNAPSE AUDIO...",
+            "PRE-HEATING DEFLECTOR SHIELDS...",
+            "INITIATING TRANSLATIONAL ALIGNMENT...",
+            "LOCKING SECTOR TARGET MATRIX...",
+            "WARP FIELD STABILIZED."
+        ]
+        diag_idx = int(progress * (len(diagnostics) - 1))
+        lbl_diag = self.small_font.render(diagnostics[diag_idx], True, (150, 150, 160))
+        self.virtual_screen.blit(lbl_diag, (cx - lbl_diag.get_width() // 2, bar_y + 60))
+
     def _draw(self):
+        if self.state == 'LOADING':
+            self._draw_loading_screen()
+            scaled_screen = pygame.transform.smoothscale(self.virtual_screen, (self.new_width, self.new_height))
+            self.screen.fill(BLACK)
+            bx, by = self.offset_x, self.offset_y
+            self.screen.blit(scaled_screen, (bx, by))
+            pygame.display.flip()
+            return
+
         self.virtual_screen.fill(BLACK)
         self.ui_surface.fill((0, 0, 0, 0))
         
@@ -10107,9 +10795,13 @@ class Game:
                         target_dir = to_portal.normalize()
                         angle = math.degrees(math.atan2(target_dir.y, target_dir.x))
                         
-                        # Place arrow on a radius of 120 pixels around player
-                        arrow_x = VIRTUAL_WIDTH // 2 + target_dir.x * 120
-                        arrow_y = VIRTUAL_HEIGHT // 2 + target_dir.y * 120
+                        # Center of player's ship on screen
+                        px_scr = self.player.x + self.player.width // 2
+                        py_scr = self.player.y + self.player.height // 2
+                        
+                        # Place arrow on a radius of 75 pixels around player's ship
+                        arrow_x = px_scr + target_dir.x * 75
+                        arrow_y = py_scr + target_dir.y * 75
                         
                         arrow_surf = pygame.Surface((30, 30), pygame.SRCALPHA)
                         pygame.draw.polygon(arrow_surf, cfg['theme_color'], [(8, 4), (24, 15), (8, 26), (14, 15)])
@@ -10230,3 +10922,5 @@ class Game:
 if __name__ == "__main__":
     game = Game()
     game.run()
+
+# endregion
