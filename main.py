@@ -47,6 +47,13 @@ PURPLE = (147, 112, 219)
 
 SOUNDS = None
 
+def safe_normalize(vec, fallback=None):
+    if fallback is None:
+        fallback = pygame.math.Vector2(0, -1)
+    if vec.length_squared() > 0:
+        return vec.normalize()
+    return fallback
+
 class SaveManager:
     SAVE_DIR = "saves"
     SAVE_FILE = os.path.join(SAVE_DIR, "save.json")
@@ -97,32 +104,53 @@ class SaveManager:
             with open(SaveManager.SAVE_FILE, 'r') as f:
                 save_dict = json.load(f)
                 
-            game.selected_class = save_dict["class"]
+            # Validate and extract all keys first to prevent partial load mutations
+            save_class = save_dict["class"]
+            save_name = save_dict["name"]
+            save_stage = save_dict["stage"]
+            save_lvl = save_dict["lvl"]
+            save_xp = save_dict["xp"]
+            save_pts = save_dict["pts"]
+            save_creds = save_dict["creds"]
+            save_scraps = save_dict["scraps"]
+            save_wp_p = save_dict["wp_p"]
+            save_wp_s = save_dict["wp_s"]
+            save_shld = save_dict["shld"]
+            save_core = save_dict["core"]
+            save_eng = save_dict["eng"]
+            save_skills = save_dict["skills"]
+            save_vol = save_dict.get("vol", 50)
+            save_tint = save_dict.get("tint", 50)
+            save_vignette = save_dict.get("vignette", 100)
+            save_softness = save_dict.get("softness", 15)
+            
+            # Now perform game reset and apply validated data
+            game.selected_class = save_class
             game.reset_game()
             
-            game.player_name = save_dict["name"]
-            game.campaign_stage = save_dict["stage"]
+            game.player_name = save_name
+            game.campaign_stage = save_stage
             
             p = game.player
             p.name = game.player_name
             p.set_class(game.selected_class)
-            p.level = save_dict["lvl"]
-            p.xp = save_dict["xp"]
-            p.skill_points = save_dict["pts"]
-            p.credits = save_dict["creds"]
-            p.scraps = save_dict["scraps"]
-            p.active_primary = save_dict["wp_p"]
-            p.active_secondary = save_dict["wp_s"]
-            p.equipped_shield = save_dict["shld"]
-            p.equipped_core = save_dict["core"]
-            p.equipped_engine = save_dict["eng"]
-            p.skills.update(save_dict["skills"])
+            p.level = save_lvl
+            p.xp = save_xp
+            p.skill_points = save_pts
+            p.credits = save_creds
+            p.scraps = save_scraps
+            p.active_primary = save_wp_p
+            p.active_secondary = save_wp_s
+            p.equipped_shield = save_shld
+            p.equipped_core = save_core
+            p.equipped_engine = save_eng
+            p.skills.update(save_skills)
             
-            if SOUNDS and "vol" in save_dict:
-                SOUNDS.set_global_volume(save_dict["vol"] / 100.0)
-            game.filter_tint_alpha = save_dict.get("tint", 50)
-            game.filter_vignette_alpha = save_dict.get("vignette", 100)
-            game.filter_softness = save_dict.get("softness", 15)
+            if SOUNDS:
+                SOUNDS.set_global_volume(save_vol / 100.0)
+            game.filter_tint_alpha = save_tint
+            game.filter_vignette_alpha = save_vignette
+            game.filter_softness = save_softness
             
             game.active_quest = game.quests[min(len(game.quests)-1, game.campaign_stage - 1)]
             game.unlocked_zones = {
@@ -1022,7 +1050,7 @@ class Bullet:
         closest_target = None
         min_dist = 300.0
         bullet_pos = pygame.math.Vector2(self.x, self.y)
-        bullet_dir = pygame.math.Vector2(self.dx, self.dy).normalize()
+        bullet_dir = safe_normalize(pygame.math.Vector2(self.dx, self.dy))
         
         for entity in enemies + meteors + static_obstacles:
             entity_center = pygame.math.Vector2(entity.rect.center)
@@ -1039,10 +1067,10 @@ class Bullet:
         if self.target and hasattr(self.target, 'rect') and self.target.rect.y < self.y + 100:
             target_center = pygame.math.Vector2(self.target.rect.center)
             bullet_pos = pygame.math.Vector2(self.x, self.y)
-            desired_dir = (target_center - bullet_pos).normalize()
+            desired_dir = safe_normalize(target_center - bullet_pos)
             current_dir = pygame.math.Vector2(self.dx, self.dy)
             # Extremely subtle lerp (0.08 -> 0.015) so it barely curves toward targets
-            steered_dir = current_dir.lerp(desired_dir, 0.015).normalize()
+            steered_dir = safe_normalize(current_dir.lerp(desired_dir, 0.015))
             self.dx = steered_dir.x
             self.dy = steered_dir.y
 
@@ -1216,9 +1244,9 @@ class HomingMissile:
         if not self.converge_pos and self.target:
             target_pos = pygame.math.Vector2(self.target.rect.center)
             missile_pos = pygame.math.Vector2(self.x, self.y)
-            desired = (target_pos - missile_pos).normalize()
+            desired = safe_normalize(target_pos - missile_pos)
             current = pygame.math.Vector2(self.dx, self.dy)
-            steer = current.lerp(desired, 0.15).normalize()
+            steer = safe_normalize(current.lerp(desired, 0.15))
             self.dx = steer.x
             self.dy = steer.y
             
@@ -1565,10 +1593,10 @@ class EnemyBullet:
         if current_target_pos:
             to_target = current_target_pos - pygame.math.Vector2(self.x, self.y)
             if to_target.length() > 5:
-                to_target = to_target.normalize()
-                dir_vec = pygame.math.Vector2(self.dx, self.dy).normalize()
+                to_target = safe_normalize(to_target)
+                dir_vec = safe_normalize(pygame.math.Vector2(self.dx, self.dy))
                 dir_vec += to_target * 0.05
-                dir_vec = dir_vec.normalize()
+                dir_vec = safe_normalize(dir_vec)
                 self.dx = dir_vec.x
                 self.dy = dir_vec.y
                 
@@ -1576,10 +1604,11 @@ class EnemyBullet:
             player_center = pygame.math.Vector2(self.target_player.rect.center)
             to_bullet = pygame.math.Vector2(self.x, self.y) - player_center
             dist = to_bullet.length()
-            if dist < 180:
+            if 0 < dist < 180:
                 pull_strength = (180 - dist) * 0.003 # 5x weaker pull on player
-                self.target_player.x += to_bullet.normalize().x * pull_strength
-                self.target_player.y += to_bullet.normalize().y * pull_strength
+                pull_dir = safe_normalize(to_bullet)
+                self.target_player.x += pull_dir.x * pull_strength
+                self.target_player.y += pull_dir.y * pull_strength
                 self.target_player.rect.x = int(self.target_player.x)
                 self.target_player.rect.y = int(self.target_player.y)
                 
@@ -2003,7 +2032,7 @@ class Boss:
                     if current_time - ent.last_shot > self.shoot_delay:
                         ent.last_shot = current_time
                         ent_center_node = pygame.math.Vector2(ent.rect.center)
-                        dir_to_player = (player_center - ent_center_node).normalize()
+                        dir_to_player = safe_normalize(player_center - ent_center_node)
                         spawn_offset = ent.width // 2 + 20
                         spawn_pos = ent_center_node + dir_to_player * spawn_offset
                         
@@ -2089,7 +2118,7 @@ class Boss:
                 if SOUNDS: SOUNDS.play_spatial('enemy_boss', ent.rect.centerx, ent.rect.centery, player.x, player.y)
                 ent_center = pygame.math.Vector2(ent.rect.center)
                 player_center = pygame.math.Vector2(player.rect.center)
-                dir_to_player = (player_center - ent_center).normalize()
+                dir_to_player = safe_normalize(player_center - ent_center)
                 spawn_offset = ent.width // 2 + 20
                 spawn_pos = ent_center + dir_to_player * spawn_offset
                 
@@ -2466,7 +2495,7 @@ class Enemy:
                 self.is_invisible = to_player.length() > 300
             elif self.zone == 'NEBULA':
                 if (current_time // 2000) % 3 == 0:
-                    self.velocity += to_player.normalize() * 0.8
+                    self.velocity += safe_normalize(to_player) * 0.8
             elif self.zone == 'QUANTUM':
                 # Shift Blink Teleport gimmick
                 if player_bullets:
@@ -2485,8 +2514,8 @@ class Enemy:
         if self.zone == 'VOID' and self.subtype == 'HEAVY':
             # Abyss Sentinel Gravity Pull
             dist = to_player.length()
-            if dist < 300:
-                pull = to_player.normalize() * (0.8 * (1.0 - dist/300))
+            if 0 < dist < 300:
+                pull = safe_normalize(to_player) * (0.8 * (1.0 - dist/300))
                 player.velocity -= pull
 
         player_center = pygame.math.Vector2(player.rect.center)
@@ -4747,6 +4776,8 @@ class Game:
             self.small_portals.append(SmallPortal(px, py))
 
     def spawn_explosion(self, x, y, color_palette, count=15):
+        if not color_palette:
+            color_palette = [CYAN]
         if count >= 10 and SOUNDS:
             SOUNDS.play('explosion')
         for _ in range(count):
@@ -5067,7 +5098,8 @@ class Game:
                 self.running = False
                 
             elif event.type == pygame.VIDEORESIZE:
-                SCREEN_WIDTH, SCREEN_HEIGHT = event.w, event.h
+                SCREEN_WIDTH = max(1, event.w)
+                SCREEN_HEIGHT = max(1, event.h)
                 self.screen = pygame.display.set_mode((SCREEN_WIDTH, SCREEN_HEIGHT), pygame.RESIZABLE)
                 self._update_scaling()
                 
@@ -5115,12 +5147,12 @@ class Game:
                     if btn_invincible.collidepoint(vmx, vmy):
                         self.debug_invincible = not getattr(self, 'debug_invincible', False)
                         if SOUNDS: SOUNDS.play('upgrade')
-                        return
+                        continue
                     elif btn_resources.collidepoint(vmx, vmy):
                         self.player.credits += 1000000
                         self.player.scraps += 100000
                         if SOUNDS: SOUNDS.play('purchase')
-                        return
+                        continue
                     elif btn_skip_level.collidepoint(vmx, vmy):
                         if self.state == 'PLAYING' and self.current_zone != 'HUB':
                             self.boss_defeated = True
@@ -5130,7 +5162,7 @@ class Game:
                             if self.boss:
                                 self.boss.is_dead = True
                             if SOUNDS: SOUNDS.play('warp')
-                        return
+                        continue
                     elif btn_skip_ending.collidepoint(vmx, vmy):
                         self.victory_start_time = pygame.time.get_ticks()
                         self.escape_sequence_active = False
@@ -5138,13 +5170,13 @@ class Game:
                         self.wormhole_spawned = False
                         self.state = 'VICTORY'
                         if SOUNDS: SOUNDS.play('warp')
-                        return
+                        continue
                         
                 if self.state == 'INTRO':
                     if not self.transition_state:
                         self.transition_state = 'INTRO_TO_MAIN_MENU'
                         self.transition_start_time = pygame.time.get_ticks()
-                    return
+                    continue
 
                 # Sliders checks
                 if self.state in ('MAIN_MENU', 'CLASS_SELECT', 'PAUSED'):
@@ -5695,7 +5727,7 @@ class Game:
                     if not self.transition_state:
                         self.transition_state = 'INTRO_TO_MAIN_MENU'
                         self.transition_start_time = pygame.time.get_ticks()
-                    return
+                    continue
                 if self.state == 'MAIN_MENU':
                     if self.input_active:
                         if event.key == pygame.K_BACKSPACE:
@@ -6497,8 +6529,8 @@ class Game:
                 for item in collection:
                     item_pos = pygame.math.Vector2(item.x, item.y)
                     dist = player_center.distance_to(item_pos)
-                    if dist < 250:
-                        pull = (player_center - item_pos).normalize() * (12.0 * (1.0 - dist / 250.0))
+                    if 0 < dist < 250:
+                        pull = safe_normalize(player_center - item_pos) * (12.0 * (1.0 - dist / 250.0))
                         item.x += pull.x
                         item.y += pull.y
                         if hasattr(item, 'rect'):
@@ -6834,10 +6866,10 @@ class Game:
                     gw = pygame.math.Vector2(eb.x, eb.y)
                     dist = bullet_pos.distance_to(gw)
                     if 0 < dist < 450:
-                        to_gw = (gw - bullet_pos).normalize()
-                        dir_vec = pygame.math.Vector2(bullet.dx, bullet.dy).normalize()
+                        to_gw = safe_normalize(gw - bullet_pos)
+                        dir_vec = safe_normalize(pygame.math.Vector2(bullet.dx, bullet.dy))
                         dir_vec += to_gw * (450 - dist) * 0.0025 # Median influence
-                        dir_vec = dir_vec.normalize()
+                        dir_vec = safe_normalize(dir_vec)
                         bullet.dx, bullet.dy = dir_vec.x, dir_vec.y
 
             # Quantum Bullet Phasing
