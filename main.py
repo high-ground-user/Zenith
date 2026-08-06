@@ -149,14 +149,8 @@ class SaveManager:
 
 class SoundManager:
     def __init__(self):
-        try:
-            if not pygame.mixer.get_init():
-                pygame.mixer.init()
-            self.enabled = True
-            self.volume = 0.5
-        except Exception:
-            self.enabled = False
-            return
+        self.enabled = False
+        self.volume = 0.5
         self.sounds = {}
         # Channels for music layers
         self.chan_ambient = None
@@ -164,6 +158,17 @@ class SoundManager:
         self.chan_level = None
         self.chan_engine = None
         self.current_level = None
+        self.music_ambient = None
+        self.music_boss = None
+        self.music_levels = {}
+
+        try:
+            if not pygame.mixer.get_init():
+                pygame.mixer.init()
+            self.enabled = True
+        except Exception:
+            return
+        
         # Load sounds and music as before
         # Create external sounds folder if not exists
         if not os.path.exists(os.path.join("assets", "sounds")):
@@ -5845,6 +5850,7 @@ class Game:
             elif self.state == 'VICTORY':
                 if SOUNDS.chan_ambient: SOUNDS.chan_ambient.set_volume(0.0)
                 if SOUNDS.chan_boss: SOUNDS.chan_boss.set_volume(0.0)
+                if SOUNDS.chan_level: SOUNDS.chan_level.set_volume(0.0)
                 if not getattr(self, '_played_victory_music', False):
                     SOUNDS.play('victory')
                     self._played_victory_music = True
